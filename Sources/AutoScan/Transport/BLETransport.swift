@@ -96,7 +96,10 @@ final class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         } else {
             devices.append(BLEDevice(id: peripheral.identifier, name: name, rssi: RSSI.intValue))
         }
-        devices.sort { ($0.looksLikeOBD ? 1 : 0, $0.rssi) > ($1.looksLikeOBD ? 1 : 0, $1.rssi) }
+        devices.sort { a, b in
+            if a.looksLikeOBD != b.looksLikeOBD { return a.looksLikeOBD }
+            return a.rssi > b.rssi
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {

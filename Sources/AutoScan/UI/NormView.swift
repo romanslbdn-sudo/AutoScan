@@ -222,7 +222,7 @@ struct ExpectedSignalView: View {
                 while x <= w - pad {
                     let phase = (x - pad) / 26
                     // Майже прямокутна хвиля: швидкі перемикання між 0,1 і 0,9 В
-                    let s = tanh(sin(phase) * 3)
+                    let s = CGFloat(tanh(sin(Double(phase)) * 3))
                     let y = (top + bottom) / 2 - s * (bottom - top) / 2
                     path.addLine(to: CGPoint(x: x, y: y))
                     x += 1.5

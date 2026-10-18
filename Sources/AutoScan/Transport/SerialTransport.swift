@@ -60,7 +60,8 @@ final class SerialTransport: OBDTransport, @unchecked Sendable {
             // Нестандартна швидкість (напр. 500000) — через IOSSIOSPEED
             var speed = speed_t(baudRate)
             let IOSSIOSPEED: UInt = 0x8008_5402
-            if ioctl(handle, IOSSIOSPEED, &speed) == -1 {
+            let rc = withUnsafeMutablePointer(to: &speed) { ioctl(handle, IOSSIOSPEED, $0) }
+            if rc == -1 {
                 Darwin.close(handle)
                 throw AdapterError.transport("Порт не підтримує швидкість \(baudRate).")
             }

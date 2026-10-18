@@ -173,7 +173,8 @@ final class AppModel: ObservableObject {
                 try await t.open()
                 try await svc.initialize { [weak self] text in
                     Task { @MainActor in
-                        if case .connecting = self?.connection { self?.connection = .connecting(text) }
+                        guard let self else { return }
+                        if case .connecting = self.connection { self.connection = .connecting(text) }
                     }
                 }
                 self.service = svc

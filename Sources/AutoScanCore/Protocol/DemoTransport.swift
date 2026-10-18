@@ -12,12 +12,15 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
     private var echo = true
     private var spaces = true
     private var input = ""
-    private let start = Date()
+    private let start: Date
     private var stored: [String] = ["P0171", "P0299"]
     private var pending: [String] = ["P0301"]
     private var distanceSinceClear = 1840
 
-    public init() {}
+    /// - Parameter startOffset: «скільки секунд авто вже працює» (для тестів).
+    public init(startOffset: TimeInterval = 0) {
+        start = Date().addingTimeInterval(-startOffset)
+    }
 
     public func open() async throws {
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -122,16 +125,17 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
 
     private var t: Double { Date().timeIntervalSince(start) }
     private func noise(_ amp: Double) -> Double { Double.random(in: -amp...amp) }
-    private var drive: Double { max(0, sin(t / 7)) }
+    // Перші ~20 с — холостий хід, далі розгін під навантаженням, і так по колу.
+    private var drive: Double { max(0, sin(t / 7 + 3.3)) }
 
     private func value(_ pid: UInt8) -> Double? {
         let d = drive
-        let misfireJitter = pending.contains("P0301") ? noise(45) : noise(8)
+        let misfireJitter = pending.contains("P0301") ? noise(75) : noise(8)
         let lean = stored.contains("P0171")
         let underboost = stored.contains("P0299")
         switch pid {
         case 0x0C: return 790 + d * 2600 + misfireJitter
-        case 0x05: return min(92, 68 + t / 6)
+        case 0x05: return min(92, 76 + t / 6)
         case 0x04: return 21 + d * 62 + noise(1.5)
         case 0x43: return 18 + d * 55 + noise(1.5)
         case 0x0E: return 9 + d * 14 + noise(1.0)
@@ -146,9 +150,9 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
         case 0x14:
             // Лямбда до каталізатора перемикається, але при бідній суміші «сидить» низько
             let s = sin(t * 5.2)
-            return lean ? 0.12 + (s > 0.6 ? 0.45 : 0.05) + noise(0.02) : 0.45 + s * 0.38
+            return lean ? 0.12 + (s > 0.6 ? 0.36 : 0.04) + noise(0.02) : 0.45 + s * 0.38
         case 0x15: return 0.66 + noise(0.02)
-        case 0x1F: return t + 240
+        case 0x1F: return t + 900
         case 0x21: return stored.isEmpty ? 0 : 412
         case 0x2F: return 46
         case 0x31: return Double(distanceSinceClear)

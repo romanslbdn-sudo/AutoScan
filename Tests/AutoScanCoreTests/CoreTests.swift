@@ -157,3 +157,51 @@ final class DemoTests: XCTestCase {
         XCTAssertTrue(after.isEmpty)
     }
 }
+
+final class DemoNormTests: XCTestCase {
+    /// Опитує демо-авто так само, як це робить програма, і оцінює «норма vs зараз».
+    private func simulate(offset: TimeInterval, codes: [String], seconds: Double) async throws -> NormContext {
+        let session = ELM327Session(transport: DemoTransport(startOffset: offset))
+        try await session.transport.open()
+        let obd = OBDService(session: session)
+        try await obd.initialize()
+        var current: [UInt8: Double] = [:]
+        var history: [UInt8: [Double]] = [:]
+        let pids = NormRules.requiredPIDs(for: codes).filter { obd.isSupported($0) }.sorted()
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            for pid in pids {
+                if let v = try await obd.read(PIDTable.definition(pid)!) {
+                    current[pid] = v
+                    history[pid, default: []].append(v)
+                }
+            }
+        }
+        return NormContext(current: current, history: history, isDiesel: false)
+    }
+
+    func testDemoIdleVerdicts() async throws {
+        let codes = ["P0171", "P0301"]
+        let ctx = try await simulate(offset: 0, codes: codes, seconds: 6)
+        for code in codes {
+            for check in NormRules.checks(for: code) {
+                let r = check.evaluate(ctx)
+                print("[\(code)] \(check.title): \(r.actualText) → \(r.verdict.title)")
+            }
+        }
+        let trim = NormRules.checks(for: "P0171").first { $0.pid == 0x07 }!
+        XCTAssertEqual(trim.evaluate(ctx).verdict, .high)
+        let lambda = NormRules.checks(for: "P0171").first { $0.pid == 0x14 }!
+        XCTAssertEqual(lambda.evaluate(ctx).verdict, .low)
+        let idle = NormRules.checks(for: "P0301").first { $0.id == "idle-stab" }!
+        XCTAssertEqual(idle.evaluate(ctx).verdict, .unstable)
+    }
+
+    func testDemoBoostVerdict() async throws {
+        let ctx = try await simulate(offset: 30, codes: ["P0299"], seconds: 2)
+        let boost = NormRules.checks(for: "P0299").first { $0.id == "boost-under" }!
+        let r = boost.evaluate(ctx)
+        print("[P0299] \(boost.title): \(r.actualText) → \(r.verdict.title)")
+        XCTAssertEqual(r.verdict, .low)
+    }
+}
