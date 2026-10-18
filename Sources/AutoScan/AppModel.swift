@@ -320,7 +320,7 @@ final class AppModel: ObservableObject {
 
     func readVehicle() async {
         guard let svc = service else { return }
-        if let v = try? await svc.readVIN() { vin = VINInfo(vin: v) } else { vin = nil }
+        if let v = try? await svc.readVIN() { vin = VINInfo(vin: v, minYear: 1996) } else { vin = nil }
         monitor = try? await svc.monitorStatus()
         fuelFromCar = await svc.readByte(0x51).flatMap(VehicleInfoCodes.fuelType)
         obdStandard = await svc.readByte(0x1C).flatMap(VehicleInfoCodes.obdStandard)

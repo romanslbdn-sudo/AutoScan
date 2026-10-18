@@ -87,7 +87,7 @@ final class ParserTests: XCTestCase {
     }
 
     func testVIN() {
-        let v = VINInfo(vin: "WVWZZZ3CZEE123456", currentYear: 2026)
+        let v = VINInfo(vin: "WVWZZZ3CZEE123456", currentYear: 2026, minYear: 1996)
         XCTAssertEqual(v.manufacturer, "Volkswagen")
         XCTAssertEqual(v.country, "Німеччина")
         XCTAssertEqual(v.modelYear, 2014)
@@ -224,7 +224,7 @@ final class DemoScenarioTests: XCTestCase {
             let vin = try? await obd.readVIN()
             XCTAssertEqual(vin, sc.vin, sc.id)
             if let v = sc.vin {
-                let info = VINInfo(vin: v, currentYear: 2026)
+                let info = VINInfo(vin: v, currentYear: 2026, minYear: 1996)
                 XCTAssertNotNil(info.manufacturer, sc.id)
                 XCTAssertEqual(info.modelYear, sc.year, sc.id)
             }
@@ -400,5 +400,23 @@ final class VINCheckTests: XCTestCase {
         XCTAssertNil(VINInfo(vin: "WVWZZZ3CZEE123456").checkDigitValid)
         XCTAssertFalse(VINInfo(vin: "WVWZZZ3CZEE12345O").isValidFormat)
         XCTAssertEqual(VINInfo(vin: "WVWZZZ3CZEE123456").parts.count, 5)
+    }
+}
+
+
+final class VINYearTests: XCTestCase {
+    func testAmbiguousEuropeanOldYear() {
+        // Ford Європа, 10-й символ G: 1986 або 2016 — без додаткових даних рік не вгадуємо
+        let v = VINInfo(vin: "WF0FXXGAGGGB12345", currentYear: 2026)
+        XCTAssertNil(v.modelYear)
+        XCTAssertEqual(v.yearCandidates, [1986, 2016])
+        XCTAssertEqual(v.yearText, "1986 або 2016")
+        XCTAssertNotNil(v.yearNote)
+        XCTAssertEqual(v.manufacturer, "Ford (Німеччина)")
+    }
+
+    func testNorthAmericaRule() {
+        XCTAssertEqual(VINInfo(vin: "1M8GDM9AXKP042788", currentYear: 2026).modelYear, 1989)
+        XCTAssertEqual(VINInfo(vin: "1FAHP3F2XCL123456", currentYear: 2026).modelYear, 2012)
     }
 }

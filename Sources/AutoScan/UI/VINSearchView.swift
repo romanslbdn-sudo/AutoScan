@@ -145,7 +145,11 @@ struct VINSearchView: View {
                 Label("Розшифровка VIN", systemImage: "barcode.viewfinder").font(Theme.headline).foregroundStyle(Theme.textSecondary)
                 InfoRow(label: "Виробник", value: i.manufacturer ?? "не визначено")
                 InfoRow(label: "Країна", value: i.country ?? "не визначено")
-                InfoRow(label: "Модельний рік", value: i.modelYear.map(String.init) ?? "не визначено")
+                InfoRow(label: "Модельний рік", value: i.yearText)
+                if let note = i.yearNote {
+                    Text(note).font(Theme.caption).foregroundStyle(i.modelYear == nil ? Theme.warning : Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 InfoRow(label: "Серійний номер", value: String(i.vin.suffix(6)), mono: true)
                 Text("Працює без інтернету, для будь-якого авто.")
                     .font(Theme.caption).foregroundStyle(Theme.textTertiary)
