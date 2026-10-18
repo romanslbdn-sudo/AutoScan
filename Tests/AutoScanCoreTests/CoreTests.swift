@@ -390,3 +390,15 @@ final class VehicleDetailsTests: XCTestCase {
         XCTAssertNotNil(v)
     }
 }
+
+
+final class VINCheckTests: XCTestCase {
+    func testCheckDigit() {
+        // Відомий коректний VIN зі стандарту прикладів (контрольна цифра X)
+        XCTAssertEqual(VINInfo(vin: "1M8GDM9AXKP042788").checkDigitValid, true)
+        XCTAssertEqual(VINInfo(vin: "1M8GDM9A1KP042788").checkDigitValid, false)
+        XCTAssertNil(VINInfo(vin: "WVWZZZ3CZEE123456").checkDigitValid)
+        XCTAssertFalse(VINInfo(vin: "WVWZZZ3CZEE12345O").isValidFormat)
+        XCTAssertEqual(VINInfo(vin: "WVWZZZ3CZEE123456").parts.count, 5)
+    }
+}

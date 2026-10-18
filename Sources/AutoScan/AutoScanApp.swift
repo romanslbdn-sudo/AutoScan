@@ -103,6 +103,7 @@ struct RootView: View {
         case .norm: NormView()
         case .report: ClientReportView()
         case .retro: RetroView()
+        case .vin: VINSearchView()
         case .packs: PacksView()
         case .log: LogView()
         }
@@ -131,7 +132,7 @@ struct Sidebar: View {
             .padding(.bottom, 22)
 
             VStack(spacing: 3) {
-                ForEach([Screen.overview, .faults, .live, .norm, .report, .retro, .packs]) { s in
+                ForEach([Screen.overview, .faults, .live, .norm, .report, .vin, .retro, .packs]) { s in
                     SidebarItem(screen: s, badge: badge(for: s))
                 }
             }

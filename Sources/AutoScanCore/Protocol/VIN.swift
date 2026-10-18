@@ -21,6 +21,41 @@ public struct VINInfo: Hashable, Sendable {
         modelYear = VINInfo.year(for: chars[9], currentYear: currentYear)
     }
 
+    /// 17 символів, лише латинські літери й цифри, без I, O, Q.
+    public var isValidFormat: Bool {
+        vin.count == 17 && !vin.contains { "IOQ".contains($0) }
+    }
+
+    /// Перевірка контрольної цифри (9-й символ). Обов'язкова для авто ринку США/Канади;
+    /// європейські виробники часто її не використовують — тоді nil.
+    public var checkDigitValid: Bool? {
+        guard isValidFormat else { return nil }
+        let chars = Array(vin)
+        let map: [Character: Int] = ["A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
+                                     "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9,
+                                     "S": 2, "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9]
+        let weights = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
+        var sum = 0
+        for (i, c) in chars.enumerated() {
+            guard let v = c.wholeNumberValue ?? map[c] else { return nil }
+            sum += v * weights[i]
+        }
+        let r = sum % 11
+        let expected: Character = r == 10 ? "X" : Character(String(r))
+        if chars[8] == expected { return true }
+        // Для європейських авто 9-й символ часто довільний — не вважаємо це помилкою
+        let northAmerica = ["1", "2", "3", "4", "5"].contains(String(chars[0]))
+        return northAmerica ? false : nil
+    }
+
+    /// Частини VIN: виробник (1–3), опис авто (4–9), рік (10), завод (11), серійний номер (12–17).
+    public var parts: [(String, String)] {
+        guard vin.count == 17 else { return [] }
+        let c = Array(vin)
+        return [(String(c[0..<3]), "Виробник (WMI)"), (String(c[3..<9]), "Модель, кузов, двигун (VDS)"),
+                (String(c[9]), "Модельний рік"), (String(c[10]), "Завод"), (String(c[11..<17]), "Серійний номер")]
+    }
+
     /// Назва марки для пошуку пакета даних (напр. "BMW").
     public var brandKey: String? {
         manufacturer.map { $0.components(separatedBy: " (").first ?? $0 }

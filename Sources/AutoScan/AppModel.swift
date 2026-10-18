@@ -4,7 +4,7 @@ import SwiftUI
 import AutoScanCore
 
 enum Screen: String, CaseIterable, Identifiable, Hashable {
-    case overview, faults, live, norm, report, retro, packs, log
+    case overview, faults, live, norm, report, vin, retro, packs, log
     var id: String { rawValue }
 
     var title: String {
@@ -15,6 +15,7 @@ enum Screen: String, CaseIterable, Identifiable, Hashable {
         case .norm: return "Норма vs зараз"
         case .report: return "Звіт клієнту"
         case .retro: return "Старі авто"
+        case .vin: return "Пошук за VIN"
         case .packs: return "Бази авто"
         case .log: return "Журнал адаптера"
         }
@@ -28,6 +29,7 @@ enum Screen: String, CaseIterable, Identifiable, Hashable {
         case .norm: return "chart.line.uptrend.xyaxis"
         case .report: return "doc.richtext"
         case .retro: return "clock.arrow.circlepath"
+        case .vin: return "barcode.viewfinder"
         case .packs: return "shippingbox"
         case .log: return "list.bullet.rectangle"
         }
