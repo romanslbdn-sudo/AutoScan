@@ -1,6 +1,5 @@
 #if os(macOS)
 import SwiftUI
-import Charts
 import AutoScanCore
 
 struct LiveDataView: View {
@@ -55,13 +54,13 @@ struct LiveDataView: View {
 }
 
 struct PIDTile: View {
-    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var live: LiveStore
     let def: PIDDefinition
     let supported: Bool
 
     var body: some View {
-        let value = model.values[def.pid]
-        let hist = model.history[def.pid] ?? []
+        let value = live.values[def.pid]
+        let hist = live.history[def.pid] ?? []
         Card(padding: 14) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -96,6 +95,8 @@ struct PIDTile: View {
 }
 
 /// Маленький графік історії значень.
+/// Малюється одним контуром через Canvas — у рази легше за Swift Charts,
+/// тому не навантажує вбудовану графіку Intel.
 struct Sparkline: View {
     let values: [Double]
     var color: Color = Theme.accent
@@ -103,27 +104,41 @@ struct Sparkline: View {
     var yDomain: ClosedRange<Double>? = nil
 
     var body: some View {
-        let pts = Array(values.enumerated())
-        Chart {
+        Canvas { ctx, size in
+            let pts = Self.downsample(values, to: Int(size.width / 3))
+            let dom = domain
+            let span = max(dom.upperBound - dom.lowerBound, 0.000_001)
+            func y(_ v: Double) -> CGFloat { size.height * CGFloat(1 - (v - dom.lowerBound) / span) }
+
             if let band {
-                RectangleMark(xStart: .value("x", 0), xEnd: .value("x", max(values.count - 1, 1)),
-                              yStart: .value("lo", band.lowerBound), yEnd: .value("hi", band.upperBound))
-                    .foregroundStyle(Theme.ok.opacity(0.12))
+                let top = y(min(band.upperBound, dom.upperBound))
+                let bottom = y(max(band.lowerBound, dom.lowerBound))
+                ctx.fill(Path(CGRect(x: 0, y: top, width: size.width, height: max(0, bottom - top))),
+                         with: .color(Theme.ok.opacity(0.12)))
             }
-            ForEach(pts, id: \.offset) { i, v in
-                AreaMark(x: .value("t", i), y: .value("v", v))
-                    .foregroundStyle(LinearGradient(colors: [color.opacity(0.28), color.opacity(0.0)], startPoint: .top, endPoint: .bottom))
-                    .interpolationMethod(.monotone)
-                LineMark(x: .value("t", i), y: .value("v", v))
-                    .foregroundStyle(color)
-                    .lineStyle(StrokeStyle(lineWidth: 1.8))
-                    .interpolationMethod(.monotone)
+            guard pts.count >= 2 else { return }
+            let step = size.width / CGFloat(pts.count - 1)
+            var line = Path()
+            for (i, v) in pts.enumerated() {
+                let p = CGPoint(x: CGFloat(i) * step, y: y(v))
+                if i == 0 { line.move(to: p) } else { line.addLine(to: p) }
             }
+            var area = line
+            area.addLine(to: CGPoint(x: size.width, y: size.height))
+            area.addLine(to: CGPoint(x: 0, y: size.height))
+            area.closeSubpath()
+            ctx.fill(area, with: .linearGradient(Gradient(colors: [color.opacity(0.26), color.opacity(0)]),
+                                                 startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+            ctx.stroke(line, with: .color(color), style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
         }
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .chartYScale(domain: domain)
-        .chartLegend(.hidden)
+    }
+
+    /// Не більше однієї точки на ~3 пікселі ширини.
+    static func downsample(_ v: [Double], to maxCount: Int) -> [Double] {
+        let n = max(maxCount, 2)
+        guard v.count > n else { return v }
+        let stride = Double(v.count) / Double(n)
+        return (0..<n).map { v[min(v.count - 1, Int(Double($0) * stride))] }
     }
 
     private var domain: ClosedRange<Double> {

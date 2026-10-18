@@ -12,6 +12,8 @@ struct AutoScanApp: App {
         WindowGroup("AutoScan") {
             RootView()
                 .environmentObject(model)
+                .environmentObject(model.live)
+                .environmentObject(model.logStore)
                 .preferredColorScheme(.dark)
                 .frame(minWidth: 1080, minHeight: 700)
         }
@@ -53,7 +55,9 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $model.showConnectSheet) {
-            ConnectSheet().environmentObject(model)
+            ConnectSheet()
+                .environmentObject(model)
+                .environmentObject(model.live)
         }
         .alert("AutoScan", isPresented: Binding(
             get: { model.alertMessage != nil },
@@ -166,7 +170,6 @@ struct ConnectionBadge: View {
         } label: {
             HStack(spacing: 10) {
                 Circle().fill(color).frame(width: 9, height: 9)
-                    .shadow(color: color.opacity(0.8), radius: 4)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                     Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)

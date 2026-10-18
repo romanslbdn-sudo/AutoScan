@@ -55,7 +55,9 @@ struct PacksView: View {
                     }
                 }
 
-                Text("Завантажені пакети").font(Theme.title).foregroundStyle(Theme.textPrimary).padding(.top, 6)
+                OnlineCatalogSection()
+
+                Text("Встановлені пакети").font(Theme.title).foregroundStyle(Theme.textPrimary).padding(.top, 6)
 
                 if model.packs.isEmpty {
                     Card {
@@ -63,7 +65,7 @@ struct PacksView: View {
                             Image(systemName: "shippingbox").font(.system(size: 30)).foregroundStyle(Theme.accent)
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Пакетів ще немає").font(Theme.headline).foregroundStyle(Theme.textPrimary)
-                                Text("Пакет — це файл .json із заводськими кодами (P1xxx, U1xxx тощо) і примітками для конкретної марки. Коли пакет завантажено, програма сама підбирає його за VIN-кодом авто. Щоб створити свій пакет, збережіть шаблон, заповніть його і завантажте.")
+                                Text("Завантажте потрібні марки з розділу «Пакети в інтернеті» вище. Програма сама підбирає пакет за VIN-кодом авто. Без пакетів програма теж працює з будь-якою машиною — пакети лише додають заводські коди марки.")
                                     .font(Theme.body).foregroundStyle(Theme.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -101,6 +103,84 @@ struct PacksView: View {
                 try enc.encode(BrandPack.template).write(to: url)
             } catch {
                 model.alertMessage = "Не вдалося зберегти шаблон: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+/// Каталог пакетів марок з інтернету.
+private struct OnlineCatalogSection: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Пакети в інтернеті").font(Theme.title).foregroundStyle(Theme.textPrimary)
+                    Text("Додаткові заводські коди під різні марки. Нові марки з'являтимуться тут самі.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                if model.catalogState == .loading { ProgressView().controlSize(.small) }
+                Button { Task { await model.loadCatalog() } } label: { Label("Оновити список", systemImage: "arrow.clockwise") }
+                    .buttonStyle(SubtleButtonStyle())
+                    .disabled(model.catalogState == .loading)
+            }
+            .padding(.top, 6)
+
+            if case .failed(let msg) = model.catalogState {
+                Card(padding: 14) {
+                    Label(msg, systemImage: "wifi.exclamationmark")
+                        .font(Theme.body).foregroundStyle(Theme.warning)
+                }
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)], spacing: 12) {
+                ForEach(model.catalog) { item in
+                    CatalogCard(item: item)
+                }
+            }
+        }
+    }
+}
+
+private struct CatalogCard: View {
+    @EnvironmentObject var model: AppModel
+    let item: PackCatalog.Item
+
+    var body: some View {
+        let status = model.status(of: item)
+        let forThisCar = item.applies(toBrand: model.brand)
+        let busy = model.installingPackID == item.id
+        Card(padding: 14) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10).fill(forThisCar ? Theme.accent.opacity(0.15) : Theme.cardRaised)
+                        .frame(width: 44, height: 44)
+                    Text(String(item.brand.prefix(2)).uppercased()).font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(forThisCar ? Theme.accent : Theme.textSecondary)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(item.brand).font(Theme.headline).foregroundStyle(Theme.textPrimary)
+                        if forThisCar { Pill(text: "ваше авто", color: Theme.accent) }
+                    }
+                    Text("\(item.codes) кодів · версія \(item.version)").font(Theme.caption).foregroundStyle(Theme.textTertiary)
+                }
+                Spacer()
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    switch status {
+                    case .installed:
+                        Label("Встановлено", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.ok)
+                    case .updateAvailable:
+                        Button("Оновити") { Task { await model.install(item) } }.buttonStyle(AccentButtonStyle())
+                    case .notInstalled:
+                        Button("Завантажити") { Task { await model.install(item) } }.buttonStyle(AccentButtonStyle())
+                    }
+                }
             }
         }
     }

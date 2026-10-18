@@ -97,7 +97,12 @@ public final class DTCDatabase: @unchecked Sendable {
     /// Перевіряє файл і копіює його в папку пакетів.
     @discardableResult
     public func importPack(from url: URL) throws -> BrandPack {
-        let data = try Data(contentsOf: url)
+        try importPack(data: Data(contentsOf: url))
+    }
+
+    /// Встановлює пакет з даних (напр. завантажених з інтернету).
+    @discardableResult
+    public func importPack(data: Data) throws -> BrandPack {
         let pack: BrandPack
         do {
             pack = try JSONDecoder().decode(BrandPack.self, from: data)
@@ -145,6 +150,8 @@ public final class DTCDatabase: @unchecked Sendable {
         }
         return (Self.structuralDescription(code), "Розшифровка за структурою коду")
     }
+
+    public func installedPack(id: String) -> BrandPack? { packs.first { $0.id == id } }
 
     /// Загальний опис, коли коду немає в базах.
     public static func structuralDescription(_ code: String) -> DTCEntry {

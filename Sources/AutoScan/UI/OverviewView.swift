@@ -23,6 +23,10 @@ struct OverviewView: View {
                         }
                     }
 
+                    if let item = model.suggestedPack {
+                        SuggestedPackBanner(item: item)
+                    }
+
                     HStack(alignment: .top, spacing: 16) {
                         VehicleCard()
                         StatusCard()
@@ -43,6 +47,35 @@ struct OverviewView: View {
             return [m, v.modelYear.map { "\($0) р." }].compactMap { $0 }.joined(separator: " · ")
         }
         return "Загальний стан авто"
+    }
+}
+
+/// Підказка: для марки цього авто є пакет заводських кодів.
+private struct SuggestedPackBanner: View {
+    @EnvironmentObject var model: AppModel
+    let item: PackCatalog.Item
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "shippingbox.fill").font(.system(size: 22)).foregroundStyle(Theme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Для \(item.brand) є пакет заводських кодів").font(Theme.headline).foregroundStyle(Theme.textPrimary)
+                Text("\(item.codes) додаткових кодів саме цієї марки — точніші описи помилок.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            if model.installingPackID == item.id {
+                ProgressView().controlSize(.small)
+            } else {
+                Button(model.status(of: item) == .updateAvailable ? "Оновити" : "Завантажити") {
+                    Task { await model.install(item) }
+                }
+                .buttonStyle(AccentButtonStyle())
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.accent.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.accent.opacity(0.35)))
     }
 }
 
@@ -67,7 +100,10 @@ struct NotConnectedView: View {
             HStack(spacing: 10) {
                 Button("Підключитися") { model.showConnectSheet = true }
                     .buttonStyle(AccentButtonStyle())
-                Button("Спробувати демо") { model.connect(kind: .demo) }
+                Button("Спробувати демо") {
+                    UserDefaults.standard.set(ConnectionKind.demo.rawValue, forKey: "conn.kind")
+                    model.showConnectSheet = true
+                }
                     .buttonStyle(SubtleButtonStyle())
             }
             if case .connecting(let text) = model.connection {
@@ -201,7 +237,7 @@ private struct QuickGauges: View {
 
 /// Кругла шкала для одного параметра.
 struct RingGauge: View {
-    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var live: LiveStore
     let pid: UInt8
     let label: String
     var warnBelow: Double? = nil
@@ -209,7 +245,7 @@ struct RingGauge: View {
 
     var body: some View {
         let def = PIDTable.definition(pid)!
-        let v = model.values[pid]
+        let v = live.values[pid]
         let frac = v.map { min(1, max(0, ($0 - def.scaleMin) / (def.scaleMax - def.scaleMin))) } ?? 0
         let warn = v.map { x in (warnBelow.map { x < $0 } ?? false) || (warnAbove.map { x > $0 } ?? false) } ?? false
         let color = v == nil ? Theme.textTertiary : (warn ? Theme.warning : Theme.accent)
@@ -221,7 +257,7 @@ struct RingGauge: View {
                 Circle().trim(from: 0.12, to: 0.12 + 0.76 * frac)
                     .stroke(color, style: StrokeStyle(lineWidth: 9, lineCap: .round))
                     .rotationEffect(.degrees(90))
-                    .animation(.easeOut(duration: 0.35), value: frac)
+                    .animation(.easeOut(duration: 0.25), value: frac)
                 VStack(spacing: 0) {
                     Text(v.map { def.format($0) } ?? "—").font(Theme.number(22)).foregroundStyle(Theme.textPrimary)
                     Text(def.unit).font(Theme.caption).foregroundStyle(Theme.textTertiary)

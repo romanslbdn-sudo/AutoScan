@@ -205,3 +205,58 @@ final class DemoNormTests: XCTestCase {
         XCTAssertEqual(r.verdict, .low)
     }
 }
+
+final class DemoScenarioTests: XCTestCase {
+    /// Кожне демо-авто має підключатися, віддавати свої помилки і правильний VIN.
+    func testAllScenariosConnect() async throws {
+        for sc in DemoScenario.all {
+            let session = ELM327Session(transport: DemoTransport(scenario: sc))
+            try await session.transport.open()
+            let obd = OBDService(session: session)
+            try await obd.initialize()
+            XCTAssertEqual(obd.info.isCAN, sc.isCAN, sc.id)
+            let stored = try await obd.readDTCs(kind: .stored)
+            XCTAssertEqual(stored.map(\.code), sc.stored, sc.id)
+            let pending = try await obd.readDTCs(kind: .pending)
+            XCTAssertEqual(pending.map(\.code), sc.pending, sc.id)
+            let permanent = try await obd.readDTCs(kind: .permanent)
+            XCTAssertEqual(permanent.map(\.code), sc.supportsPermanent ? sc.permanent : [], sc.id)
+            let vin = try? await obd.readVIN()
+            XCTAssertEqual(vin, sc.vin, sc.id)
+            if let v = sc.vin {
+                let info = VINInfo(vin: v, currentYear: 2026)
+                XCTAssertNotNil(info.manufacturer, sc.id)
+                XCTAssertEqual(info.modelYear, sc.year, sc.id)
+            }
+            let status = try await obd.monitorStatus()
+            XCTAssertEqual(status?.isDiesel, sc.isDiesel, sc.id)
+            XCTAssertEqual(status?.milOn, !sc.stored.isEmpty, sc.id)
+            for pid in sc.pids where PIDTable.definition(pid) != nil {
+                XCTAssertTrue(obd.supportedPIDs.contains(pid), "\(sc.id) PID \(String(format: "%02X", pid))")
+            }
+            // Опис кожного коду є в базі
+            let db = DTCDatabase(packsDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+            for c in sc.stored + sc.pending + sc.permanent {
+                XCTAssertNotNil(db.generic[c], "\(sc.id): немає опису \(c)")
+            }
+        }
+    }
+}
+
+final class PackCatalogTests: XCTestCase {
+    func testRepoPacksAreValid() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let index = try JSONDecoder().decode(PackCatalog.self, from: Data(contentsOf: root.appendingPathComponent("packs/index.json")))
+        XCTAssertGreaterThanOrEqual(index.packs.count, 4)
+        let db = DTCDatabase(packsDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        for item in index.packs {
+            let data = try Data(contentsOf: root.appendingPathComponent("packs/" + item.file))
+            let pack = try db.importPack(data: data)
+            XCTAssertEqual(pack.id, item.id)
+            XCTAssertEqual(pack.codes.count, item.codes)
+        }
+        XCTAssertEqual(db.lookup("P1260", brand: "Ford (Німеччина)").source, "Ford: заводські коди")
+        XCTAssertTrue(PackCatalog.isNewer("1.10", than: "1.2"))
+        XCTAssertFalse(PackCatalog.isNewer("1.0", than: "1.0"))
+    }
+}

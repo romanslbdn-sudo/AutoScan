@@ -5,7 +5,7 @@ import AutoScanCore
 
 /// Журнал обміну з адаптером — допомагає зрозуміти, чому немає зв'язку.
 struct LogView: View {
-    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var logStore: LogStore
     @State private var autoscroll = true
 
     private static let timeFormat: DateFormatter = {
@@ -25,14 +25,14 @@ struct LogView: View {
             }
             .padding([.horizontal, .top], 28)
 
-            if model.log.isEmpty {
+            if logStore.lines.isEmpty {
                 EmptyStateView(icon: "list.bullet.rectangle", title: "Журнал порожній",
                                message: "Тут з'являться команди після підключення. Якщо адаптер не підключається — скопіюйте журнал і надішліть, щоб розібратися.")
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(model.log) { line in
+                            ForEach(logStore.lines) { line in
                                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                                     Text(Self.timeFormat.string(from: line.time))
                                         .foregroundStyle(Theme.textTertiary)
@@ -51,8 +51,8 @@ struct LogView: View {
                     }
                     .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card))
                     .padding([.horizontal, .bottom], 28)
-                    .onChange(of: model.log.count) { _ in
-                        if autoscroll, let last = model.log.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    .onChange(of: logStore.lines.count) { _ in
+                        if autoscroll, let last = logStore.lines.last { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
             }
@@ -78,7 +78,7 @@ struct LogView: View {
     }
 
     private func copyAll() {
-        let text = model.log.map { "\(Self.timeFormat.string(from: $0.time)) \(symbol($0.direction)) \($0.text)" }
+        let text = logStore.lines.map { "\(Self.timeFormat.string(from: $0.time)) \(symbol($0.direction)) \($0.text)" }
             .joined(separator: "\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

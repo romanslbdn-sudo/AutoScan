@@ -1,6 +1,5 @@
 #if os(macOS)
 import SwiftUI
-import Charts
 import AutoScanCore
 
 struct NormView: View {
@@ -39,11 +38,12 @@ struct NormView: View {
 
 private struct CodeNormSection: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var live: LiveStore
     let code: String
 
     var body: some View {
         let entry = model.database.lookup(code, brand: model.brand).entry
-        let checks = NormRules.checks(for: code)
+        let checks = model.checks(for: code)
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 Text(code).font(Theme.code).foregroundStyle(Theme.textPrimary)
@@ -70,7 +70,7 @@ private struct CodeNormSection: View {
     }
 
     @ViewBuilder private func summaryPill(_ checks: [NormCheck]) -> some View {
-        let ctx = model.normContext
+        let ctx = model.normContext(live)
         let results = checks.map { $0.evaluate(ctx).verdict }
         let problems = results.filter(\.isProblem).count
         if checks.isEmpty {
@@ -87,10 +87,11 @@ private struct CodeNormSection: View {
 
 struct NormCheckCard: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var live: LiveStore
     let check: NormCheck
 
     var body: some View {
-        let result = check.evaluate(model.normContext)
+        let result = check.evaluate(model.normContext(live))
         let color = Theme.verdictColor(result.verdict)
         let def = PIDTable.definition(check.pid)
         Card(padding: 16) {
@@ -126,9 +127,9 @@ struct NormCheckCard: View {
                             .font(.system(size: 12, weight: .semibold)).foregroundStyle(color)
                         ZStack {
                             RoundedRectangle(cornerRadius: 10).fill(Theme.cardRaised)
-                            let hist = model.history[check.pid] ?? []
+                            let hist = live.history[check.pid] ?? []
                             if hist.count >= 2 {
-                                Sparkline(values: hist.suffix(80).map { $0 },
+                                Sparkline(values: hist,
                                           color: color == Theme.textSecondary ? Theme.accent : color,
                                           band: check.shape == .pulses ? nil : check.lo...check.hi,
                                           yDomain: domain(def))
@@ -172,7 +173,7 @@ struct NormCheckCard: View {
 
     private func domain(_ def: PIDDefinition?) -> ClosedRange<Double>? {
         guard let def else { return nil }
-        let hist = model.history[check.pid] ?? []
+        let hist = live.history[check.pid] ?? []
         var lo = min(check.lo, hist.min() ?? check.lo)
         var hi = max(check.hi, hist.max() ?? check.hi)
         if check.shape == .pulses { lo = 0; hi = max(hi, 1200) }

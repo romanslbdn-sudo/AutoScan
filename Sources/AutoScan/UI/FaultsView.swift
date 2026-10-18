@@ -121,7 +121,7 @@ struct DTCCard: View {
         let info = model.entry(for: dtc)
         let e = info.entry
         let sevColor = Theme.severityColor(e.severity)
-        let hasChecks = !NormRules.checks(for: dtc.code).isEmpty
+        let hasChecks = !model.checks(for: dtc.code).isEmpty
 
         HStack(alignment: .top, spacing: 0) {
             Rectangle().fill(sevColor).frame(width: 4)

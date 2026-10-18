@@ -64,7 +64,7 @@ enum ConnectionState: Equatable {
 @MainActor
 final class AppModel: ObservableObject {
     // Навігація
-    @Published var screen: Screen = .overview
+    @Published var screen: Screen = .overview { didSet { updatePollPlan() } }
     @Published var showConnectSheet = false
 
     // Підключення
@@ -72,6 +72,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var adapterName = ""
     @Published private(set) var connInfo = ConnectionInfo()
     @Published private(set) var isDemo = false
+    @Published private(set) var demoScenario: DemoScenario?
 
     // Авто
     @Published private(set) var vin: VINInfo?
@@ -86,25 +87,34 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastDTCRead: Date?
     @Published private(set) var isClearing = false
 
-    // Живі дані
-    @Published private(set) var values: [UInt8: Double] = [:]
-    @Published private(set) var history: [UInt8: [Double]] = [:]
+    // Живі дані — окремі об'єкти, щоб їхні часті оновлення не перемальовували все вікно
+    let live = LiveStore()
+    let logStore = LogStore()
     @Published var selectedPIDs: [UInt8] {
-        didSet { UserDefaults.standard.set(selectedPIDs.map(Int.init), forKey: "selectedPIDs") }
+        didSet {
+            UserDefaults.standard.set(selectedPIDs.map(Int.init), forKey: "selectedPIDs")
+            updatePollPlan()
+        }
     }
-    @Published var livePaused = false
+    @Published var livePaused = false { didSet { updatePollPlan() } }
 
-    // Журнал і повідомлення
-    @Published private(set) var log: [AdapterLogLine] = []
     @Published var alertMessage: String?
 
     let database = DTCDatabase()
     @Published private(set) var packs: [BrandPack] = []
 
+    // Каталог пакетів в інтернеті
+    enum CatalogState: Equatable { case idle, loading, loaded, failed(String) }
+    @Published private(set) var catalog: [PackCatalog.Item] = []
+    @Published private(set) var catalogState: CatalogState = .idle
+    @Published private(set) var installingPackID: String?
+
     private var service: OBDService?
     private var transport: OBDTransport?
     private var pollTask: Task<Void, Never>?
-    private let historyLimit = 150
+    private var flushTask: Task<Void, Never>?
+    /// Що опитувати зараз — оновлюється при зміні екрана, читається фоновим опитуванням.
+    private let pollPlan = PollPlan()
 
     init() {
         if let saved = UserDefaults.standard.array(forKey: "selectedPIDs") as? [Int], !saved.isEmpty {
@@ -113,6 +123,16 @@ final class AppModel: ObservableObject {
             selectedPIDs = PIDTable.defaultSelection
         }
         packs = database.packs
+        Task { await loadCatalog() }
+        // Єдиний «пульс» оновлення екрана: 4 рази на секунду
+        flushTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard let self else { return }
+                self.live.flush()
+                self.logStore.flush()
+            }
+        }
     }
 
     // MARK: Похідні значення
@@ -135,61 +155,95 @@ final class AppModel: ObservableObject {
 
     var activePacks: [BrandPack] { database.packs(forBrand: brand) }
 
-    var normContext: NormContext {
-        NormContext(current: values, history: history, isDiesel: monitor?.isDiesel ?? false)
+    func normContext(_ live: LiveStore) -> NormContext {
+        NormContext(current: live.values, history: live.history, isDiesel: monitor?.isDiesel ?? false)
+    }
+
+    /// Перевірки «норма vs зараз» лише для сигналів, які це авто реально передає.
+    func checks(for code: String) -> [NormCheck] {
+        NormRules.checks(for: code).filter { isSupported($0.pid) }
     }
 
     // MARK: Підключення
 
-    func connect(kind: ConnectionKind, serialPath: String = "", baud: Int = 38400,
-                 host: String = "192.168.0.10", port: UInt16 = 35000, bleDevice: BLEDevice? = nil) {
+    func connect(kind: ConnectionKind, serialPath: String = "", baud: Int = 0,
+                 host: String = "192.168.0.10", port: UInt16 = 35000, bleDevice: BLEDevice? = nil,
+                 demo: DemoScenario = .default) {
         disconnect(silently: true)
-        let t: OBDTransport
-        switch kind {
-        case .demo: t = DemoTransport()
-        case .usb: t = SerialTransport(path: serialPath, baudRate: baud)
-        case .wifi: t = TCPTransport(host: host, port: port)
-        case .bluetooth:
-            guard let d = bleDevice else { return }
-            t = BLETransport(deviceID: d.id, deviceName: d.name)
-        }
-        transport = t
         isDemo = kind == .demo
-        adapterName = t.displayName
+        demoScenario = kind == .demo ? demo : nil
         connection = .connecting("Підключення до адаптера…")
-        log.removeAll()
+        logStore.clear()
+        vin = nil; monitor = nil; dtcs = []
 
-        let session = ELM327Session(transport: t)
-        session.onLog = { [weak self] line in
-            Task { @MainActor in self?.appendLog(line) }
+        // Для USB без вибраної швидкості — пробуємо найпоширеніші по черзі
+        let bauds = baud > 0 ? [baud] : [38400, 115200, 9600, 230400, 500000]
+        let makeTransport: (Int) -> OBDTransport? = { b in
+            switch kind {
+            case .demo: return DemoTransport(scenario: demo)
+            case .usb: return SerialTransport(path: serialPath, baudRate: b)
+            case .wifi: return TCPTransport(host: host, port: port)
+            case .bluetooth:
+                guard let d = bleDevice else { return nil }
+                return BLETransport(deviceID: d.id, deviceName: d.name)
+            }
         }
-        t.onDisconnect = { [weak self] reason in
-            Task { @MainActor in self?.handleDrop(reason) }
-        }
-        let svc = OBDService(session: session)
+        let attempts = kind == .usb ? bauds : [0]
+        let logStore = self.logStore
 
         Task {
-            do {
-                try await t.open()
-                try await svc.initialize { [weak self] text in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        if case .connecting = self.connection { self.connection = .connecting(text) }
-                    }
+            var lastError: Error = AdapterError.notConnected
+            for (i, b) in attempts.enumerated() {
+                guard let t = makeTransport(b) else { break }
+                if kind == .usb && attempts.count > 1 {
+                    self.connection = .connecting("Пробую швидкість \(b) (\(i + 1) з \(attempts.count))…")
                 }
-                self.service = svc
-                self.connInfo = svc.info
-                self.connection = .connected
-                self.showConnectSheet = false
-                await self.readVehicle()
-                await self.readDTCs()
-                self.startPolling()
-            } catch {
-                t.close()
-                self.transport = nil
-                self.service = nil
-                self.connection = .failed(Self.describe(error))
+                let session = ELM327Session(transport: t)
+                session.onLog = { line in logStore.record(line) }
+                t.onDisconnect = { [weak self] reason in
+                    Task { @MainActor in self?.handleDrop(reason) }
+                }
+                let svc = OBDService(session: session)
+                do {
+                    try await t.open()
+                    if kind == .usb && attempts.count > 1 {
+                        // Швидка перевірка: чи відповідає адаптер на цій швидкості
+                        let r = try await session.command("ATI", timeout: 1.5)
+                        guard r.uppercased().contains("ELM") || r.uppercased().contains("OBD") || r.uppercased().contains("STN") else {
+                            throw AdapterError.timeout
+                        }
+                    }
+                    try await svc.initialize { [weak self] text in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            if case .connecting = self.connection { self.connection = .connecting(text) }
+                        }
+                    }
+                    self.transport = t
+                    self.service = svc
+                    self.adapterName = t.displayName
+                    self.connInfo = svc.info
+                    self.connection = .connected
+                    self.showConnectSheet = false
+                    await self.readVehicle()
+                    await self.readDTCs()
+                    self.updatePollPlan()
+                    self.startPolling()
+                    return
+                } catch {
+                    t.close()
+                    lastError = error
+                    // Якщо адаптер відповів, але авто ні — інші швидкості не допоможуть
+                    if let e = error as? AdapterError, e == .unableToConnect || e == .canError { break }
+                }
             }
+            self.transport = nil
+            self.service = nil
+            var message = Self.describe(lastError)
+            if kind == .usb, attempts.count > 1, (lastError as? AdapterError) == .timeout {
+                message = "Адаптер не відповідає. Перевірте, що вибрано правильний пристрій і адаптер вставлений у машину (на ньому має світитися лампочка)."
+            }
+            self.connection = .failed(message)
         }
     }
 
@@ -201,9 +255,10 @@ final class AppModel: ObservableObject {
         service = nil
         if !silently {
             connection = .disconnected
+            isDemo = false
+            demoScenario = nil
         }
-        values = [:]
-        history = [:]
+        live.reset(keepValues: false)
     }
 
     private func handleDrop(_ reason: String) {
@@ -216,11 +271,6 @@ final class AppModel: ObservableObject {
     static func describe(_ error: Error) -> String {
         if let e = error as? AdapterError { return e.description }
         return error.localizedDescription
-    }
-
-    private func appendLog(_ line: AdapterLogLine) {
-        log.append(line)
-        if log.count > 800 { log.removeFirst(log.count - 800) }
     }
 
     // MARK: Читання
@@ -240,10 +290,10 @@ final class AppModel: ObservableObject {
             all += try await svc.readDTCs(kind: .stored)
             all += (try? await svc.readDTCs(kind: .pending)) ?? []
             all += (try? await svc.readDTCs(kind: .permanent)) ?? []
-            // Один і той самий код може бути і «активним», і «постійним» — показуємо обидва статуси.
             dtcs = all
             lastDTCRead = Date()
             monitor = (try? await svc.monitorStatus()) ?? monitor
+            updatePollPlan()
         } catch {
             alertMessage = "Не вдалося прочитати помилки: " + Self.describe(error)
         }
@@ -257,7 +307,7 @@ final class AppModel: ObservableObject {
             try await svc.clearDTCs()
             try? await Task.sleep(nanoseconds: 800_000_000)
             await readDTCs()
-            history = [:]
+            live.reset()
         } catch {
             alertMessage = "Помилки не стерто: " + Self.describe(error)
         }
@@ -271,62 +321,62 @@ final class AppModel: ObservableObject {
 
     // MARK: Опитування поточних даних
 
-    private func pidsToPoll() -> [UInt8] {
+    /// Перерахувати список параметрів для опитування (при зміні екрана, вибору параметрів тощо).
+    func updatePollPlan() {
+        var pids: [UInt8]
+        var interval: UInt64 = 30_000_000
         switch screen {
         case .live:
-            return livePaused ? [] : selectedPIDs
+            pids = livePaused ? [] : selectedPIDs
         case .norm:
-            return Array(NormRules.requiredPIDs(for: uniqueCodes)).sorted()
+            pids = Array(NormRules.requiredPIDs(for: uniqueCodes)).sorted()
         case .overview:
-            return [0x0C, 0x05, 0x42, 0x0D]
+            pids = [0x0C, 0x05, 0x42]
+            interval = 400_000_000
         default:
-            return [0x0C, 0x42]
+            // Інші екрани живих даних не показують — лише зрідка перевіряємо зв'язок
+            pids = [0x0C]
+            interval = 1_500_000_000
         }
+        if let s = service { pids = pids.filter { s.isSupported($0) } }
+        if isDemo { interval = max(interval, 120_000_000) }
+        pollPlan.set(pids: pids, interval: interval)
     }
 
+    /// Опитування йде у фоні й не займає головний потік інтерфейсу.
     private func startPolling() {
         pollTask?.cancel()
-        pollTask = Task { [weak self] in
+        guard let svc = service else { return }
+        let plan = pollPlan
+        let live = self.live
+        pollTask = Task.detached(priority: .utility) { [weak self] in
             var failures = 0
             while !Task.isCancelled {
-                guard let self, let svc = self.service else { return }
-                let pids = self.pidsToPoll().filter { svc.isSupported($0) }
+                let (pids, interval) = plan.get()
                 if pids.isEmpty {
-                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    try? await Task.sleep(nanoseconds: 300_000_000)
                     continue
                 }
                 for pid in pids {
                     if Task.isCancelled { return }
                     guard let def = PIDTable.definition(pid) else { continue }
                     do {
-                        let v = try await svc.read(def)
+                        if let v = try await svc.read(def) { live.record(pid, v) }
                         failures = 0
-                        self.store(pid, v)
-                    } catch AdapterError.timeout {
-                        failures += 1
                     } catch {
                         failures += 1
                     }
                     if failures >= 6 {
-                        self.handleDrop("Адаптер перестав відповідати. Перевірте підключення і запалювання.")
+                        await self?.handleDrop("Адаптер перестав відповідати. Перевірте підключення і запалювання.")
                         return
                     }
                 }
-                try? await Task.sleep(nanoseconds: self.isDemo ? 120_000_000 : 30_000_000)
+                try? await Task.sleep(nanoseconds: interval)
             }
         }
     }
 
-    private func store(_ pid: UInt8, _ value: Double?) {
-        guard let value else { return }
-        values[pid] = value
-        var h = history[pid] ?? []
-        h.append(value)
-        if h.count > historyLimit { h.removeFirst(h.count - historyLimit) }
-        history[pid] = h
-    }
-
-    func resetHistory() { history = [:] }
+    func resetHistory() { live.reset() }
 
     // MARK: Пакети марок
 
@@ -345,6 +395,51 @@ final class AppModel: ObservableObject {
         packs = database.packs
     }
 
+    /// Завантажити список доступних пакетів з інтернету.
+    func loadCatalog() async {
+        guard catalogState != .loading else { return }
+        catalogState = .loading
+        do {
+            var req = URLRequest(url: PackCatalog.indexURL)
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            req.timeoutInterval = 12
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            catalog = try JSONDecoder().decode(PackCatalog.self, from: data).packs.sorted { $0.brand < $1.brand }
+            catalogState = .loaded
+        } catch {
+            catalogState = .failed("Не вдалося завантажити каталог. Перевірте інтернет. Якщо Мак підключений до Wi‑Fi адаптера — інтернету в цей час немає.")
+        }
+    }
+
+    enum PackStatus { case notInstalled, installed, updateAvailable }
+
+    func status(of item: PackCatalog.Item) -> PackStatus {
+        guard let local = database.installedPack(id: item.id) else { return .notInstalled }
+        return PackCatalog.isNewer(item.version, than: local.version) ? .updateAvailable : .installed
+    }
+
+    /// Пакет з каталогу, який підходить до поточного авто, але ще не встановлений.
+    var suggestedPack: PackCatalog.Item? {
+        catalog.first { $0.applies(toBrand: brand) && status(of: $0) != .installed }
+    }
+
+    func install(_ item: PackCatalog.Item) async {
+        installingPackID = item.id
+        defer { installingPackID = nil }
+        do {
+            var req = URLRequest(url: PackCatalog.fileURL(item))
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            req.timeoutInterval = 15
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            try database.importPack(data: data)
+            packs = database.packs
+        } catch {
+            alertMessage = "Не вдалося завантажити пакет «\(item.title)». Перевірте інтернет і спробуйте ще раз."
+        }
+    }
+
     // MARK: Звіт
 
     func reportText() -> String {
@@ -354,6 +449,7 @@ final class AppModel: ObservableObject {
         df.timeStyle = .short
         var s = "ЗВІТ ДІАГНОСТИКИ AutoScan\n\(df.string(from: Date()))\n\n"
         s += "АВТО\n"
+        if let d = demoScenario { s += "ДЕМО-РЕЖИМ: \(d.car), \(d.engine), \(d.year)\n" }
         if let v = vin {
             s += "VIN: \(v.vin)\n"
             if let m = v.manufacturer { s += "Марка: \(m)\n" }
@@ -369,6 +465,7 @@ final class AppModel: ObservableObject {
             for mon in m.monitors { s += "  • \(mon.name): \(mon.complete ? "готово" : "не завершено")\n" }
             s += "\n"
         }
+        let ctx = normContext(live)
         s += "ПОМИЛКИ (\(dtcs.count))\n"
         if dtcs.isEmpty { s += "Помилок не знайдено.\n" }
         for d in dtcs {
@@ -378,16 +475,32 @@ final class AppModel: ObservableObject {
             s += "Серйозність: \(e.entry.severityTitle)\n"
             s += "Можливі причини:\n"
             for (i, c) in e.entry.causes.enumerated() { s += "  \(i + 1). \(c)\n" }
-            let checks = NormRules.checks(for: d.code)
+            let checks = self.checks(for: d.code)
             if !checks.isEmpty {
                 s += "Норма vs зараз:\n"
                 for ch in checks {
-                    let r = ch.evaluate(normContext)
+                    let r = ch.evaluate(ctx)
                     s += "  • \(ch.title): \(r.actualText) — \(r.verdict.title). Норма: \(ch.expected)\n"
                 }
             }
         }
         return s
+    }
+}
+
+/// Потокобезпечний «план» опитування для фонової задачі.
+final class PollPlan: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pids: [UInt8] = []
+    private var interval: UInt64 = 30_000_000
+
+    func set(pids: [UInt8], interval: UInt64) {
+        lock.lock(); self.pids = pids; self.interval = interval; lock.unlock()
+    }
+
+    func get() -> ([UInt8], UInt64) {
+        lock.lock(); defer { lock.unlock() }
+        return (pids, interval)
     }
 }
 #endif

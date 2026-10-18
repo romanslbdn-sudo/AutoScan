@@ -49,7 +49,14 @@ public struct NormContext: Sendable {
 
     var rpm: Double? { current[0x0C] }
     var running: Bool { (rpm ?? 0) > 400 }
-    var idle: Bool { running && (rpm ?? 0) < 1100 && (current[0x0D] ?? 0) < 3 }
+    /// Холостий хід: авто стоїть, педаль відпущена (дросель прикритий).
+    /// Оберти не обмежуємо жорстко — інакше завищений холостий хід ніколи б не перевірявся.
+    var idle: Bool {
+        guard running, (current[0x0D] ?? 0) < 3 else { return false }
+        if let throttle = current[0x11] { return throttle < 22 && (rpm ?? 0) < 1600 }
+        if let load = current[0x04] { return load < 35 && (rpm ?? 0) < 1600 }
+        return (rpm ?? 0) < 1100
+    }
     var warm: Bool { (current[0x05] ?? 90) >= 70 }
 }
 

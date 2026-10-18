@@ -1,0 +1,52 @@
+{
+ "version": 1,
+ "packs": [
+  {
+   "id": "ford",
+   "brand": "Ford",
+   "title": "Ford: заводські коди",
+   "version": "1.0",
+   "matches": [
+    "Ford"
+   ],
+   "file": "ford.json",
+   "codes": 8
+  },
+  {
+   "id": "toyota",
+   "brand": "Toyota / Lexus",
+   "title": "Toyota і Lexus: заводські коди",
+   "version": "1.0",
+   "matches": [
+    "Toyota",
+    "Lexus"
+   ],
+   "file": "toyota.json",
+   "codes": 8
+  },
+  {
+   "id": "honda",
+   "brand": "Honda / Acura",
+   "title": "Honda і Acura: заводські коди",
+   "version": "1.0",
+   "matches": [
+    "Honda",
+    "Acura"
+   ],
+   "file": "honda.json",
+   "codes": 8
+  },
+  {
+   "id": "nissan",
+   "brand": "Nissan / Infiniti",
+   "title": "Nissan і Infiniti: заводські коди",
+   "version": "1.0",
+   "matches": [
+    "Nissan",
+    "Infiniti"
+   ],
+   "file": "nissan.json",
+   "codes": 8
+  }
+ ]
+}

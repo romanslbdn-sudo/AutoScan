@@ -33,6 +33,24 @@ final class SerialTransport: OBDTransport, @unchecked Sendable {
 
     static let baudRates = [9600, 38400, 57600, 115200, 230400, 500000]
 
+    enum PortKind { case usb, bluetooth }
+
+    /// Зрозуміла назва порту замість технічної «/dev/cu.usbserial-1420».
+    static func describe(_ path: String) -> (title: String, detail: String, kind: PortKind) {
+        let raw = (path as NSString).lastPathComponent
+        let name = raw.hasPrefix("cu.") ? String(raw.dropFirst(3)) : raw
+        let lower = name.lowercased()
+        let usbMarks = ["usbserial", "usbmodem", "wchusbserial", "slab_usbtouart", "usb", "ftdi", "pl2303", "ch34"]
+        if usbMarks.contains(where: { lower.contains($0) }) {
+            return ("USB-адаптер", name, .usb)
+        }
+        // Усе інше — зазвичай класичний Bluetooth-адаптер, спарений у налаштуваннях Mac
+        let pretty = name.replacingOccurrences(of: "-SerialPort", with: "")
+            .replacingOccurrences(of: "-SPPDev", with: "")
+            .replacingOccurrences(of: "-", with: " ")
+        return (pretty, "спарений Bluetooth-адаптер", .bluetooth)
+    }
+
     func open() async throws {
         let handle = Darwin.open(path, O_RDWR | O_NOCTTY | O_NONBLOCK)
         guard handle >= 0 else {
