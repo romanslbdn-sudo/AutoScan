@@ -30,6 +30,14 @@ struct AutoScanApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandMenu("Вигляд") {
+                Button("Перемкнути нічний режим") {
+                    let d = UserDefaults.standard
+                    let night = d.string(forKey: "theme.mode") == ThemeMode.night.rawValue
+                    d.set(night ? ThemeMode.dark.rawValue : ThemeMode.night.rawValue, forKey: "theme.mode")
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
             CommandMenu("Діагностика") {
                 Button("Підключитися…") { model.showConnectSheet = true }
                     .keyboardShortcut("k", modifiers: .command)
@@ -53,8 +61,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    @AppStorage("theme.mode") private var themeMode = ThemeMode.dark.rawValue
 
     var body: some View {
+        // Тема застосовується до перемальовування, тож усі кольори беруться вже нові
+        let _ = (Theme.mode = ThemeMode(rawValue: themeMode) ?? .dark)
         NavigationSplitView {
             Sidebar()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
@@ -64,6 +75,8 @@ struct RootView: View {
                 detail
             }
         }
+        // Повна перебудова вікна при зміні теми — щоб усі кольори оновились одразу
+        .id(themeMode)
         .sheet(isPresented: $model.showConnectSheet) {
             ConnectSheet()
                 .environmentObject(model)
@@ -122,6 +135,10 @@ struct Sidebar: View {
 
             Spacer()
 
+            ThemeToggle()
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+
             SidebarItem(screen: .log, badge: nil)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
@@ -135,6 +152,33 @@ struct Sidebar: View {
     private func badge(for s: Screen) -> Int? {
         if s == .faults, !model.dtcs.isEmpty { return model.uniqueCodes.count }
         return nil
+    }
+}
+
+/// Перемикач «Темний / Нічний».
+struct ThemeToggle: View {
+    @AppStorage("theme.mode") private var themeMode = ThemeMode.dark.rawValue
+
+    var body: some View {
+        let night = themeMode == ThemeMode.night.rawValue
+        Button {
+            themeMode = night ? ThemeMode.dark.rawValue : ThemeMode.night.rawValue
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: night ? "moon.fill" : "moon")
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 20)
+                Text(night ? "Нічний режим" : "Темний режим").font(.system(size: 13.5))
+                Spacer()
+                Text(night ? "увімк." : "вимк.").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Нічний режим: ще темніший фон і приглушені кольори, щоб не втомлювались очі")
     }
 }
 

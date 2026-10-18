@@ -3,22 +3,34 @@ import SwiftUI
 import AutoScanCore
 
 /// Кольори та шрифти програми — єдиний стиль на всіх екранах.
+enum ThemeMode: String, CaseIterable {
+    case dark, night
+    var title: String { self == .dark ? "Темний" : "Нічний" }
+}
+
 enum Theme {
-    static let background = Color(red: 0.067, green: 0.075, blue: 0.094)
-    static let sidebar = Color(red: 0.086, green: 0.094, blue: 0.118)
-    static let card = Color(red: 0.118, green: 0.129, blue: 0.157)
-    static let cardRaised = Color(red: 0.145, green: 0.157, blue: 0.192)
-    static let stroke = Color.white.opacity(0.07)
+    /// Поточний режим. Змінюється перемикачем; вікно після цього перемальовується повністю.
+    static var mode: ThemeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "theme.mode") ?? "") ?? .dark
+    private static var night: Bool { mode == .night }
 
-    static let textPrimary = Color(red: 0.93, green: 0.94, blue: 0.96)
-    static let textSecondary = Color(red: 0.60, green: 0.63, blue: 0.69)
-    static let textTertiary = Color(red: 0.42, green: 0.45, blue: 0.51)
+    private static func c(_ r: Double, _ g: Double, _ b: Double) -> Color { Color(red: r, green: g, blue: b) }
 
-    static let accent = Color(red: 0.25, green: 0.82, blue: 0.76)
-    static let ok = Color(red: 0.33, green: 0.84, blue: 0.52)
-    static let warning = Color(red: 1.00, green: 0.73, blue: 0.27)
-    static let danger = Color(red: 1.00, green: 0.38, blue: 0.38)
-    static let info = Color(red: 0.42, green: 0.62, blue: 1.00)
+    // «Нічний» — майже чорний фон, приглушений текст і менш насичені кольори
+    static var background: Color { night ? c(0.035, 0.039, 0.047) : c(0.067, 0.075, 0.094) }
+    static var sidebar: Color { night ? c(0.051, 0.055, 0.066) : c(0.086, 0.094, 0.118) }
+    static var card: Color { night ? c(0.075, 0.082, 0.096) : c(0.118, 0.129, 0.157) }
+    static var cardRaised: Color { night ? c(0.098, 0.106, 0.122) : c(0.145, 0.157, 0.192) }
+    static var stroke: Color { Color.white.opacity(night ? 0.045 : 0.07) }
+
+    static var textPrimary: Color { night ? c(0.78, 0.79, 0.81) : c(0.93, 0.94, 0.96) }
+    static var textSecondary: Color { night ? c(0.50, 0.52, 0.56) : c(0.60, 0.63, 0.69) }
+    static var textTertiary: Color { night ? c(0.34, 0.36, 0.40) : c(0.42, 0.45, 0.51) }
+
+    static var accent: Color { night ? c(0.27, 0.62, 0.58) : c(0.25, 0.82, 0.76) }
+    static var ok: Color { night ? c(0.33, 0.64, 0.45) : c(0.33, 0.84, 0.52) }
+    static var warning: Color { night ? c(0.85, 0.63, 0.30) : c(1.00, 0.73, 0.27) }
+    static var danger: Color { night ? c(0.85, 0.40, 0.40) : c(1.00, 0.38, 0.38) }
+    static var info: Color { night ? c(0.42, 0.55, 0.82) : c(0.42, 0.62, 1.00) }
 
     static func severityColor(_ s: Int) -> Color {
         switch s {
