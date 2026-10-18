@@ -6,6 +6,7 @@ public struct ConnectionInfo: Sendable {
     public var protocolName: String = ""
     public var protocolNumber: String = ""
     public var isCAN: Bool = true
+    public init() {}
 }
 
 /// Високорівневі операції OBD2 поверх адаптера ELM327.
