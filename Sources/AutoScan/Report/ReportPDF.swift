@@ -138,7 +138,7 @@ enum ReportPDF {
         for (i, item) in measured.enumerated() {
             let (block, r, h) = item
             var need = h
-            if block.keepWithNext, i + 1 < measured.count { need += measured[i + 1].2 }
+            if block.keepWithNext, i + 1 < measured.count { need += block.spacingAfter + measured[i + 1].2 }
             if y > 0 && y + need > usable {
                 pages.append([])
                 y = 0
@@ -385,7 +385,8 @@ enum ReportPDF {
                         Spacer(minLength: 6)
                         Text(c.actual).font(.system(size: 9.5, weight: .semibold).monospacedDigit()).foregroundStyle(ink)
                         Text(c.verdict).font(.system(size: 8.5, weight: .bold)).foregroundStyle(amber)
-                            .frame(width: 92, alignment: .trailing)
+                            .lineLimit(1)
+                            .frame(width: 118, alignment: .trailing)
                     }
                 }
             }
