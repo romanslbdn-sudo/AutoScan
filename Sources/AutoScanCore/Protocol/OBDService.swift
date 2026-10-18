@@ -18,6 +18,8 @@ public final class OBDService: @unchecked Sendable {
     public let session: ELM327Session
     public private(set) var info = ConnectionInfo()
     public private(set) var supportedPIDs: Set<UInt8> = []
+    /// Чи вміє зв'язка «сканер + авто» віддавати кілька параметрів за один запит (лише CAN).
+    public private(set) var multiPID = false
 
     public init(session: ELM327Session) {
         self.session = session
@@ -82,7 +84,14 @@ public final class OBDService: @unchecked Sendable {
             supportedPIDs.formUnion(Self.decodeSupported(p, offset: offset))
             offset &+= 0x20
         }
-        session.info("Протокол: \(info.protocolName). Підтримуваних параметрів: \(supportedPIDs.count)")
+        // Перевірка швидкого режиму: кілька параметрів за один запит
+        if info.isCAN {
+            let probe = [0x0C, 0x05, 0x04].compactMap { PIDTable.definition(UInt8($0)) }.filter { supportedPIDs.contains($0.pid) }
+            if probe.count >= 2, let got = try? await readMany(probe), got.count == probe.count {
+                multiPID = true
+            }
+        }
+        session.info("Протокол: \(info.protocolName). Параметрів: \(supportedPIDs.count). Швидкий режим: \(multiPID ? "так" : "ні")")
     }
 
     /// Перший запит до авто: чи відповідає блок двигуна і які параметри він знає.
@@ -143,11 +152,46 @@ public final class OBDService: @unchecked Sendable {
     // MARK: Дані
 
     public func isSupported(_ pid: UInt8) -> Bool {
-        supportedPIDs.isEmpty || supportedPIDs.contains(pid)
+        if pid == 0xF0 { return true }                       // напругу вміє міряти будь-який ELM327
+        if pid == 0xF1 { return isSupported(0x06) && isSupported(0x07) }
+        return supportedPIDs.isEmpty || supportedPIDs.contains(pid)
+    }
+
+    /// Напруга на виводі 16 роз'єму OBD (≈ напруга акумулятора), міряє сам адаптер.
+    public func adapterVoltage() async throws -> Double? {
+        let raw = try await session.command("ATRV")
+        let digits = raw.filter { $0.isNumber || $0 == "." }
+        return Double(digits)
+    }
+
+    /// Кілька параметрів одним запитом (до 6 на CAN). Повертає те, що вдалося розібрати.
+    public func readMany(_ defs: [PIDDefinition]) async throws -> [UInt8: Double] {
+        let real = defs.filter { !$0.isVirtual }
+        guard !real.isEmpty else { return [:] }
+        let cmd = "01" + real.map { String(format: "%02X", $0.pid) }.joined()
+        let raw = try await session.command(cmd, timeout: 4)
+        let msgs: [[UInt8]]
+        do { msgs = try ResponseParser.messages(from: raw) } catch AdapterError.noData { return [:] }
+        let wanted = Set(real.map(\.pid))
+        var result: [UInt8: Double] = [:]
+        for m in msgs {
+            guard let start = m.firstIndex(of: 0x41) else { continue }
+            var i = start + 1
+            while i < m.count {
+                let pid = m[i]
+                guard let def = PIDTable.definition(pid), def.length > 0, i + def.length <= m.count - 1 else { break }
+                let data = Array(m[(i + 1)...(i + def.length)])
+                if wanted.contains(pid), result[pid] == nil, let v = def.decode(data) { result[pid] = v }
+                i += 1 + def.length
+            }
+        }
+        return result
     }
 
     /// Читає один параметр поточних даних. nil — авто не відповіло.
     public func read(_ def: PIDDefinition) async throws -> Double? {
+        if def.pid == 0xF0 { return try await adapterVoltage() }
+        if def.isVirtual { return nil }
         let raw = try await session.command(def.hexCode)
         do {
             let data = try ResponseParser.payload(from: raw, mode: 0x01, pid: def.pid)

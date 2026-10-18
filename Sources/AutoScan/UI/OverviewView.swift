@@ -36,6 +36,8 @@ struct OverviewView: View {
                         QuickGauges()
                         ReadinessCard()
                     }
+
+                    KeyReadings()
                 }
                 .padding(28)
             }
@@ -275,6 +277,42 @@ struct RingGauge: View {
     }
 }
 
+/// Основні показники одним поглядом.
+private struct KeyReadings: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var live: LiveStore
+    private let pids: [UInt8] = [0x04, 0x06, 0x07, 0x10, 0x0B, 0x0F, 0x11, 0x0D, 0x5C, 0xF0]
+
+    var body: some View {
+        let items = pids.compactMap { PIDTable.definition($0) }.filter { model.isSupported($0.pid) }
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Основні показники", systemImage: "list.bullet.below.rectangle")
+                        .font(Theme.headline).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Button("Усі параметри →") { model.screen = .live }.buttonStyle(.link)
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                    ForEach(items) { def in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(def.shortName).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text(live.values[def.pid].map { def.format($0) } ?? "…")
+                                    .font(Theme.number(18)).foregroundStyle(Theme.textPrimary)
+                                Text(def.unit).font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.cardRaised))
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct ReadinessCard: View {
     @EnvironmentObject var model: AppModel
 
@@ -282,7 +320,8 @@ private struct ReadinessCard: View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Label("Готовність систем самоперевірки", systemImage: "checklist").font(Theme.headline).foregroundStyle(Theme.textSecondary)
+                    Label("Готовність систем самоперевірки", systemImage: "checklist")
+                        .help("Скільки систем авто вже перевірили себе. 7 з 7 — усі перевірки пройдені.").font(Theme.headline).foregroundStyle(Theme.textSecondary)
                     Spacer()
                     if let m = model.monitor {
                         Text("\(m.completeCount)/\(m.monitors.count)").font(Theme.number(14)).foregroundStyle(Theme.textPrimary)

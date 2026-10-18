@@ -287,3 +287,52 @@ final class AdapterCompatibilityTests: XCTestCase {
         XCTAssertNil(obd.info.adapterNote)
     }
 }
+
+final class MultiPIDTests: XCTestCase {
+    func testMultiPIDReadsMatchSingle() async throws {
+        let session = ELM327Session(transport: DemoTransport(scenario: DemoScenario.with(id: "camry")))
+        try await session.transport.open()
+        let obd = OBDService(session: session)
+        try await obd.initialize()
+        XCTAssertTrue(obd.multiPID)
+        let defs = [0x0C, 0x05, 0x24, 0x63, 0x0F, 0x42].compactMap { PIDTable.definition(UInt8($0)) }
+        let got = try await obd.readMany(defs)
+        XCTAssertEqual(Set(got.keys), Set(defs.map(\.pid)))
+        XCTAssertEqual(got[0x63]!, 250, accuracy: 0.5)
+        XCTAssertEqual(got[0x24]!, 1.0, accuracy: 0.05)
+        let v = try await obd.read(PIDTable.definition(0xF0)!)
+        XCTAssertNotNil(v)
+        XCTAssertTrue(obd.isSupported(0xF1))
+    }
+
+    func testMultiFrameParse() throws {
+        let raw = "00F\r0: 41 0C 0C 80 05 7B\r1: 0F 47 42 36 B0 24 80\r2: 00 80 00 00 00 00 00\r"
+        let msgs = try ResponseParser.messages(from: raw)
+        XCTAssertEqual(msgs.count, 1)
+        XCTAssertEqual(Array(msgs[0].prefix(6)), [0x41, 0x0C, 0x0C, 0x80, 0x05, 0x7B])
+    }
+}
+
+final class RetroTests: XCTestCase {
+    func testRetroSystems() {
+        XCTAssertEqual(RetroSystems.all.count, 5)
+        let ford = RetroSystems.all.first { $0.id == "ford-eec4" }!
+        XCTAssertTrue(ford.lookup("11")!.isInfo)
+        XCTAssertEqual(ford.lookup("21")?.severity, 2)
+        let bmw = RetroSystems.all.first { $0.id == "bmw-motronic" }!
+        XCTAssertTrue(bmw.lookup("1444")!.isInfo)
+        XCTAssertNotNil(bmw.lookup("1223"))
+        for s in RetroSystems.all {
+            XCTAssertEqual(Set(s.codes.map(\.code)).count, s.codes.count, "дублікати в \(s.id)")
+            if s.digits > 0 { XCTAssertTrue(s.codes.allSatisfy { $0.code.count == s.digits }, s.id) }
+        }
+    }
+
+    func testExpandedDatabase() {
+        let db = DTCDatabase(packsDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        XCTAssertGreaterThan(db.genericCount, 500)
+        XCTAssertNotNil(db.generic["P0264"])
+        XCTAssertNotNil(db.generic["P0733"])
+        XCTAssertNotNil(db.generic["U0164"])
+    }
+}

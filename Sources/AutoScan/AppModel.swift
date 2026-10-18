@@ -4,7 +4,7 @@ import SwiftUI
 import AutoScanCore
 
 enum Screen: String, CaseIterable, Identifiable, Hashable {
-    case overview, faults, live, norm, report, packs, log
+    case overview, faults, live, norm, report, retro, packs, log
     var id: String { rawValue }
 
     var title: String {
@@ -14,6 +14,7 @@ enum Screen: String, CaseIterable, Identifiable, Hashable {
         case .live: return "Живі дані"
         case .norm: return "Норма vs зараз"
         case .report: return "Звіт клієнту"
+        case .retro: return "Старі авто"
         case .packs: return "Бази авто"
         case .log: return "Журнал адаптера"
         }
@@ -26,6 +27,7 @@ enum Screen: String, CaseIterable, Identifiable, Hashable {
         case .live: return "waveform.path.ecg"
         case .norm: return "chart.line.uptrend.xyaxis"
         case .report: return "doc.richtext"
+        case .retro: return "clock.arrow.circlepath"
         case .packs: return "shippingbox"
         case .log: return "list.bullet.rectangle"
         }
@@ -348,8 +350,8 @@ final class AppModel: ObservableObject {
         case .norm:
             pids = Array(NormRules.requiredPIDs(for: uniqueCodes)).sorted()
         case .overview:
-            pids = [0x0C, 0x05, 0x42]
-            interval = 400_000_000
+            pids = [0x0C, 0x05, 0x42, 0x04, 0x06, 0x07, 0x10, 0x0B, 0x0F, 0x11, 0x0D, 0x5C, 0xF0]
+            interval = 300_000_000
         case .report:
             // Для знімка стану потрібні основні показники і сигнали для «норма vs зараз»
             pids = Array(Set([0x0C, 0x05, 0x42, 0x07, 0x06, 0x10, 0x0B, 0x0F, 0x23])
@@ -359,6 +361,10 @@ final class AppModel: ObservableObject {
             // Інші екрани живих даних не показують — лише зрідка перевіряємо зв'язок
             pids = [0x0C]
             interval = 1_500_000_000
+        }
+        // Сумарна корекція рахується з короткої і довгої — їх теж треба опитувати
+        if pids.contains(0xF1) {
+            for p in [UInt8(0x06), 0x07] where !pids.contains(p) { pids.append(p) }
         }
         if let s = service { pids = pids.filter { s.isSupported($0) } }
         if isDemo { interval = max(interval, 120_000_000) }
@@ -373,17 +379,37 @@ final class AppModel: ObservableObject {
         let live = self.live
         pollTask = Task.detached(priority: .utility) { [weak self] in
             var failures = 0
+            var cycle = 0
+            var multi = svc.multiPID
             while !Task.isCancelled {
                 let (pids, interval) = plan.get()
                 if pids.isEmpty {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     continue
                 }
-                for pid in pids {
+                cycle += 1
+                let defs = pids.compactMap { PIDTable.definition($0) }
+                let real = defs.filter { !$0.isVirtual }
+
+                // Групи запитів: у швидкому режимі по 6 параметрів за раз, інакше по одному
+                let groups: [[PIDDefinition]] = multi
+                    ? stride(from: 0, to: real.count, by: 6).map { Array(real[$0..<min($0 + 6, real.count)]) }
+                    : real.map { [$0] }
+                for group in groups {
                     if Task.isCancelled { return }
-                    guard let def = PIDTable.definition(pid) else { continue }
                     do {
-                        if let v = try await svc.read(def) { live.record(pid, v) }
+                        if group.count > 1 {
+                            let got = try await svc.readMany(group)
+                            if got.isEmpty {
+                                // Сканер не впорався з груповим запитом — переходимо на поодинокі
+                                multi = false
+                                for def in group { if let v = try await svc.read(def) { live.record(def.pid, v) } }
+                            } else {
+                                for (pid, v) in got { live.record(pid, v) }
+                            }
+                        } else if let def = group.first, let v = try await svc.read(def) {
+                            live.record(def.pid, v)
+                        }
                         failures = 0
                     } catch {
                         failures += 1
@@ -392,6 +418,14 @@ final class AppModel: ObservableObject {
                         await self?.handleDrop("Адаптер перестав відповідати. Перевірте підключення і запалювання.")
                         return
                     }
+                }
+
+                // Віртуальні параметри
+                if pids.contains(0xF0), cycle % 4 == 1, let v = try? await svc.adapterVoltage() {
+                    live.record(0xF0, v)
+                }
+                if pids.contains(0xF1), let a = live.latest(0x06), let b = live.latest(0x07) {
+                    live.record(0xF1, a + b)
                 }
                 try? await Task.sleep(nanoseconds: interval)
             }

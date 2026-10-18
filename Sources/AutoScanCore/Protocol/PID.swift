@@ -25,6 +25,10 @@ public struct PIDDefinition: Identifiable, Hashable, @unchecked Sendable {
 
     public var id: UInt8 { pid }
     public var hexCode: String { String(format: "01%02X", pid) }
+    /// Скільки байтів даних повертає авто на цей параметр (за стандартом).
+    public var length: Int { bytes }
+    /// Параметр не запитується в авто напряму, а рахується програмою / адаптером.
+    public var isVirtual: Bool { pid >= 0xF0 }
 
     public static func == (l: PIDDefinition, r: PIDDefinition) -> Bool { l.pid == r.pid }
     public func hash(into h: inout Hasher) { h.combine(pid) }
@@ -89,6 +93,38 @@ public enum PIDTable {
 
         .init(pid: 0x21, name: "Пробіг з горящою лампою Check Engine", shortName: "Пробіг з помилкою", unit: "км", scaleMin: 0, scaleMax: 10000, decimals: 0, category: .other, bytes: 2, formula: ab),
         .init(pid: 0x31, name: "Пробіг після стирання помилок", shortName: "Пробіг після стирання", unit: "км", scaleMin: 0, scaleMax: 10000, decimals: 0, category: .other, bytes: 2, formula: ab),
+        // — Додаткові параметри —
+        .init(pid: 0x16, name: "Лямбда-зонд 3 (ряд 1)", shortName: "Лямбда B1S3", unit: "В", scaleMin: 0, scaleMax: 1.1, decimals: 2, category: .exhaust, bytes: 2, formula: { Double($0[0]) / 200 }),
+        .init(pid: 0x17, name: "Лямбда-зонд 4 (ряд 1)", shortName: "Лямбда B1S4", unit: "В", scaleMin: 0, scaleMax: 1.1, decimals: 2, category: .exhaust, bytes: 2, formula: { Double($0[0]) / 200 }),
+        .init(pid: 0x1A, name: "Лямбда-зонд 3 (ряд 2)", shortName: "Лямбда B2S3", unit: "В", scaleMin: 0, scaleMax: 1.1, decimals: 2, category: .exhaust, bytes: 2, formula: { Double($0[0]) / 200 }),
+        .init(pid: 0x1B, name: "Лямбда-зонд 4 (ряд 2)", shortName: "Лямбда B2S4", unit: "В", scaleMin: 0, scaleMax: 1.1, decimals: 2, category: .exhaust, bytes: 2, formula: { Double($0[0]) / 200 }),
+        .init(pid: 0x24, name: "Широкосмуговий зонд B1S1: склад суміші", shortName: "λ B1S1", unit: "λ", scaleMin: 0.6, scaleMax: 1.4, decimals: 3, category: .exhaust, bytes: 4, formula: { ab($0) * 2 / 65536 }),
+        .init(pid: 0x25, name: "Широкосмуговий зонд B1S2: склад суміші", shortName: "λ B1S2", unit: "λ", scaleMin: 0.6, scaleMax: 1.4, decimals: 3, category: .exhaust, bytes: 4, formula: { ab($0) * 2 / 65536 }),
+        .init(pid: 0x28, name: "Широкосмуговий зонд B2S1: склад суміші", shortName: "λ B2S1", unit: "λ", scaleMin: 0.6, scaleMax: 1.4, decimals: 3, category: .exhaust, bytes: 4, formula: { ab($0) * 2 / 65536 }),
+        .init(pid: 0x34, name: "Широкосмуговий зонд B1S1: струм", shortName: "Струм λ B1S1", unit: "мА", scaleMin: -5, scaleMax: 5, decimals: 2, category: .exhaust, bytes: 4, formula: { (Double(Int($0[2]) * 256 + Int($0[3])) / 256) - 128 }),
+        .init(pid: 0x3D, name: "Температура каталізатора (ряд 2)", shortName: "Т° кат. ряд 2", unit: "°C", scaleMin: 0, scaleMax: 1000, decimals: 0, category: .exhaust, bytes: 2, formula: { ab($0) / 10 - 40 }),
+        .init(pid: 0x3E, name: "Температура каталізатора (ряд 1, датчик 2)", shortName: "Т° кат. B1S2", unit: "°C", scaleMin: 0, scaleMax: 1000, decimals: 0, category: .exhaust, bytes: 2, formula: { ab($0) / 10 - 40 }),
+        .init(pid: 0x2E, name: "Задана продувка адсорбера (EVAP)", shortName: "Продувка EVAP", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 0, category: .fuel, bytes: 1, formula: pct),
+        .init(pid: 0x32, name: "Тиск парів палива в системі EVAP", shortName: "Тиск EVAP", unit: "Па", scaleMin: -2000, scaleMax: 2000, decimals: 0, category: .fuel, bytes: 2, formula: { Double(Int16(bitPattern: UInt16($0[0]) << 8 | UInt16($0[1]))) / 4 }),
+        .init(pid: 0x52, name: "Вміст етанолу в паливі", shortName: "Етанол", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 0, category: .fuel, bytes: 1, formula: pct),
+        .init(pid: 0x59, name: "Абсолютний тиск у паливній рампі", shortName: "Тиск рампи (абс.)", unit: "бар", scaleMin: 0, scaleMax: 2500, decimals: 0, category: .fuel, bytes: 2, formula: { ab($0) * 0.1 }),
+        .init(pid: 0x5D, name: "Момент упорскування палива", shortName: "Момент упорскування", unit: "°", scaleMin: -30, scaleMax: 30, decimals: 1, category: .fuel, bytes: 2, formula: { ab($0) / 128 - 210 }),
+        .init(pid: 0x47, name: "Положення дроселя B", shortName: "Дросель B", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 1, category: .air, bytes: 1, formula: pct),
+        .init(pid: 0x48, name: "Положення дроселя C", shortName: "Дросель C", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 1, category: .air, bytes: 1, formula: pct),
+        .init(pid: 0x4A, name: "Положення педалі газу E", shortName: "Педаль E", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 1, category: .air, bytes: 1, formula: pct),
+        .init(pid: 0x4B, name: "Положення педалі газу F", shortName: "Педаль F", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 1, category: .air, bytes: 1, formula: pct),
+        .init(pid: 0x5A, name: "Відносне положення педалі газу", shortName: "Педаль відн.", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 1, category: .air, bytes: 1, formula: pct),
+        .init(pid: 0x61, name: "Крутний момент, який просить водій", shortName: "Момент (запит)", unit: "%", scaleMin: -25, scaleMax: 100, decimals: 0, category: .engine, bytes: 1, formula: { Double($0[0]) - 125 }),
+        .init(pid: 0x62, name: "Фактичний крутний момент двигуна", shortName: "Момент (факт)", unit: "%", scaleMin: -25, scaleMax: 100, decimals: 0, category: .engine, bytes: 1, formula: { Double($0[0]) - 125 }),
+        .init(pid: 0x63, name: "Номінальний крутний момент двигуна", shortName: "Момент номін.", unit: "Н·м", scaleMin: 0, scaleMax: 800, decimals: 0, category: .engine, bytes: 2, formula: ab),
+        .init(pid: 0x5B, name: "Заряд гібридної батареї", shortName: "Гібрид. батарея", unit: "%", scaleMin: 0, scaleMax: 100, decimals: 0, category: .electric, bytes: 1, formula: pct),
+        .init(pid: 0x30, name: "Кількість прогрівів після стирання помилок", shortName: "Прогрівів після стирання", unit: "", scaleMin: 0, scaleMax: 255, decimals: 0, category: .other, bytes: 1, formula: { Double($0[0]) }),
+        .init(pid: 0x4D, name: "Час роботи з горящим Check Engine", shortName: "Час з помилкою", unit: "хв", scaleMin: 0, scaleMax: 10000, decimals: 0, category: .other, bytes: 2, formula: ab),
+        .init(pid: 0x4E, name: "Час після стирання помилок", shortName: "Час після стирання", unit: "хв", scaleMin: 0, scaleMax: 10000, decimals: 0, category: .other, bytes: 2, formula: ab),
+
+        // — Віртуальні параметри (рахує програма або адаптер) —
+        .init(pid: 0xF0, name: "Напруга акумулятора (вимірює адаптер)", shortName: "АКБ (адаптер)", unit: "В", scaleMin: 10, scaleMax: 16, decimals: 2, category: .electric, bytes: 0, formula: { _ in 0 }),
+        .init(pid: 0xF1, name: "Загальна корекція палива, ряд 1 (коротка + довга)", shortName: "Корекція сумарна", unit: "%", scaleMin: -30, scaleMax: 30, decimals: 1, category: .fuel, bytes: 0, formula: { _ in 0 }),
     ]
 
     public static let byPID: [UInt8: PIDDefinition] = {
@@ -100,5 +136,5 @@ public enum PIDTable {
     public static func definition(_ pid: UInt8) -> PIDDefinition? { byPID[pid] }
 
     /// Набір за замовчуванням для екрана «Живі дані».
-    public static let defaultSelection: [UInt8] = [0x0C, 0x05, 0x04, 0x10, 0x0B, 0x06, 0x07, 0x14, 0x11, 0x42]
+    public static let defaultSelection: [UInt8] = [0x0C, 0x05, 0x04, 0x10, 0x0B, 0x06, 0x07, 0xF1, 0x14, 0x15, 0x11, 0x0F, 0x0E, 0x42, 0xF0]
 }

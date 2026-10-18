@@ -33,6 +33,12 @@ final class LiveStore: ObservableObject, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Останнє записане значення (з будь-якого потоку).
+    func latest(_ pid: UInt8) -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        return bufValues[pid]
+    }
+
     /// Перенести накопичене на екран (викликається на головному потоці).
     @MainActor
     func flush() {

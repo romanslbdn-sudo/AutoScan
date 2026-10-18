@@ -5,6 +5,17 @@ import AutoScanCore
 struct LiveDataView: View {
     @EnvironmentObject var model: AppModel
     @State private var showPicker = false
+    @AppStorage("live.listMode") private var listMode = false
+
+    /// Вибрані параметри, які авто реально передає, — спершу; решта в кінці.
+    private var shown: [UInt8] {
+        let sel = model.selectedPIDs
+        return sel.filter { model.isSupported($0) } + sel.filter { !model.isSupported($0) }
+    }
+
+    private var availableCount: Int {
+        PIDTable.all.filter { model.isSupported($0.pid) }.count
+    }
 
     var body: some View {
         if !model.connection.isConnected {
@@ -12,16 +23,28 @@ struct LiveDataView: View {
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    ScreenHeader(title: "Живі дані", subtitle: "Показники датчиків у реальному часі") {
+                    ScreenHeader(title: "Живі дані",
+                                 subtitle: "Показано \(model.selectedPIDs.filter { model.isSupported($0) }.count) з \(availableCount) параметрів, які передає це авто") {
                         HStack(spacing: 8) {
+                            Picker("", selection: $listMode) {
+                                Image(systemName: "square.grid.2x2").tag(false)
+                                Image(systemName: "list.bullet").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 84)
+                            .help("Плитки або компактний список")
                             Button {
                                 model.livePaused.toggle()
                             } label: {
                                 Label(model.livePaused ? "Продовжити" : "Пауза", systemImage: model.livePaused ? "play.fill" : "pause.fill")
                             }
                             .buttonStyle(SubtleButtonStyle())
-                            Button { model.resetHistory() } label: { Label("Очистити графіки", systemImage: "eraser") }
+                            Button { model.resetHistory() } label: { Label("Очистити", systemImage: "eraser") }
                                 .buttonStyle(SubtleButtonStyle())
+                            Button { selectAll() } label: { Label("Усі доступні", systemImage: "checklist.checked") }
+                                .buttonStyle(SubtleButtonStyle())
+                                .help("Показати всі параметри, які передає це авто")
                             Button { showPicker = true } label: { Label("Параметри", systemImage: "slider.horizontal.3") }
                                 .buttonStyle(AccentButtonStyle())
                                 .popover(isPresented: $showPicker, arrowEdge: .bottom) {
@@ -32,11 +55,30 @@ struct LiveDataView: View {
 
                     if model.selectedPIDs.isEmpty {
                         EmptyStateView(icon: "slider.horizontal.3", title: "Параметри не вибрано",
-                                       message: "Натисніть «Параметри» і виберіть, які показники дивитися.",
-                                       actionTitle: "Вибрати параметри") { showPicker = true }
+                                       message: "Натисніть «Усі доступні» або «Параметри» і виберіть, які показники дивитися.",
+                                       actionTitle: "Показати всі доступні") { selectAll() }
+                    } else if listMode {
+                        // Компактний список: десятки параметрів на одному екрані
+                        VStack(spacing: 0) {
+                            ForEach(PIDCategory.allCases, id: \.self) { cat in
+                                let items = shown.compactMap { PIDTable.definition($0) }.filter { $0.category == cat }
+                                if !items.isEmpty {
+                                    Text(cat.rawValue.uppercased())
+                                        .font(.system(size: 10.5, weight: .bold)).foregroundStyle(Theme.textTertiary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
+                                    ForEach(items) { def in
+                                        PIDRow(def: def, supported: model.isSupported(def.pid))
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.bottom, 8)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.card))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.stroke))
                     } else {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 14)], spacing: 14) {
-                            ForEach(model.selectedPIDs, id: \.self) { pid in
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 14)], spacing: 14) {
+                            ForEach(shown, id: \.self) { pid in
                                 if let def = PIDTable.definition(pid) {
                                     PIDTile(def: def, supported: model.isSupported(pid))
                                 }
@@ -44,12 +86,53 @@ struct LiveDataView: View {
                         }
                     }
 
-                    Text("Чим більше параметрів вибрано, тим рідше оновлюється кожен — адаптер опитує їх по черзі.")
+                    Text(model.connInfo.isCAN
+                         ? "Швидкий режим: програма запитує до 6 параметрів одночасно. Навіть із усіма параметрами значення оновлюються кілька разів на секунду."
+                         : "Старий протокол (K-Line) повільніший: що більше параметрів вибрано, то рідше оновлюється кожен.")
                         .font(Theme.caption).foregroundStyle(Theme.textTertiary)
                 }
                 .padding(28)
             }
         }
+    }
+
+    private func selectAll() {
+        model.selectedPIDs = PIDTable.all.map(\.pid).filter { model.isSupported($0) }
+    }
+}
+
+/// Один параметр рядком (для компактного списку).
+struct PIDRow: View {
+    @EnvironmentObject var live: LiveStore
+    let def: PIDDefinition
+    let supported: Bool
+
+    var body: some View {
+        let value = live.values[def.pid]
+        let hist = live.history[def.pid] ?? []
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(def.name).font(.system(size: 12.5)).foregroundStyle(supported ? Theme.textPrimary : Theme.textTertiary)
+                    .lineLimit(1)
+                if let mn = hist.min(), let mx = hist.max(), hist.count > 2 {
+                    Text("мін \(def.format(mn)) · макс \(def.format(mx))")
+                        .font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            Spacer(minLength: 8)
+            if supported {
+                Sparkline(values: hist, color: Theme.accent)
+                    .frame(width: 140, height: 24)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(supported ? (value.map { def.format($0) } ?? "…") : "—")
+                    .font(Theme.number(15)).foregroundStyle(Theme.textPrimary)
+                Text(def.unit).font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+            }
+            .frame(width: 110, alignment: .trailing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
     }
 }
 

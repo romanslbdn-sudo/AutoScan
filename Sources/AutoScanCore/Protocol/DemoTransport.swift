@@ -130,6 +130,19 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
         default:
             break
         }
+        // Кілька параметрів одним запитом (лише CAN, до 6 штук)
+        if cmd.count > 4, cmd.count <= 14, cmd.count % 2 == 0, cmd.hasPrefix("01"), scenario.isCAN {
+            var bytes: [UInt8] = [0x41]
+            var i = cmd.index(cmd.startIndex, offsetBy: 2)
+            while i < cmd.endIndex {
+                let j = cmd.index(i, offsetBy: 2)
+                if let pid = UInt8(cmd[i..<j], radix: 16), pid % 0x20 != 0, scenario.pids.contains(pid), let raw = rawBytes(pid) {
+                    bytes += [pid] + raw
+                }
+                i = j
+            }
+            return bytes.count > 1 ? canFrames(bytes) : "NO DATA"
+        }
         if cmd.count == 4, cmd.hasPrefix("01"), let pid = UInt8(cmd.suffix(2), radix: 16) {
             if pid == 0 {
                 // Імітація капризного клону: автопошук не працює, ручний вибір — так
@@ -166,8 +179,13 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
     }
 
     private func vinReply(_ vin: String) -> String {
-        let bytes: [UInt8] = [0x49, 0x02, 0x01] + Array(vin.utf8)
-        var lines = ["014"]
+        canFrames([0x49, 0x02, 0x01] + Array(vin.utf8))
+    }
+
+    /// Відповідь у форматі CAN: до 7 байтів — один рядок, більше — кадри «0: …», «1: …».
+    private func canFrames(_ bytes: [UInt8]) -> String {
+        if bytes.count <= 7 { return hex(bytes) }
+        var lines = [String(format: "%03X", bytes.count)]
         var i = 0, n = 0
         while i < bytes.count {
             let size = n == 0 ? 6 : 7
@@ -231,6 +249,23 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
         case 0x46: return 12
         case 0x49: return 15 + d * 50
         case 0x5C: return min(96, 62 + t / 5)
+        case 0x24:
+            switch m.o2 {
+            case .lean: return 1.07 + noise(0.01)
+            case .rich: return 0.93 + noise(0.01)
+            case .normal: return 1.0 + noise(0.012)
+            case .absent: return nil
+            }
+        case 0x2E: return 18 + d * 20
+        case 0x30: return 37
+        case 0x47: return 16 + d * 55
+        case 0x4A: return 8 + d * 25
+        case 0x4D: return stored.isEmpty ? 0 : 845
+        case 0x4E: return Double(distanceSinceClear) * 1.8
+        case 0x5A: return 15 + d * 50
+        case 0x61: return 8 + d * 70
+        case 0x62: return 6 + d * 68
+        case 0x63: return scenario.isDiesel ? 320 : 250
         default: return nil
         }
     }
@@ -245,7 +280,11 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
         switch pid {
         case 0x0C: return u16(v * 4)
         case 0x05, 0x0F, 0x46, 0x5C: return [u8(v + 40)]
-        case 0x04, 0x11, 0x2C, 0x2F, 0x45, 0x49: return [u8(v * 255 / 100)]
+        case 0x04, 0x11, 0x2C, 0x2E, 0x2F, 0x45, 0x47, 0x49, 0x4A, 0x5A: return [u8(v * 255 / 100)]
+        case 0x30: return [u8(v)]
+        case 0x4D, 0x4E, 0x63: return u16(v)
+        case 0x61, 0x62: return [u8(v + 125)]
+        case 0x24: return u16(v * 65536 / 2) + [0x80, 0x00]
         case 0x43: return u16(v * 255 / 100)
         case 0x0E: return [u8((v + 64) * 2)]
         case 0x0D, 0x0B, 0x33: return [u8(v)]
