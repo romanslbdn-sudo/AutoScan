@@ -11,16 +11,22 @@ public struct VINInfo: Hashable, Sendable {
     public let yearCandidates: [Int]
     /// Пояснення, чому рік неоднозначний або не визначається.
     public let yearNote: String?
+    /// Стандарт, за яким складено номер (визначається автоматично).
+    public let region: VINRegion
+    /// Модель і роки випуску — для марок з відомим форматом VIN.
+    public let brandInfo: BrandVINInfo?
 
     /// - Parameter minYear: нижня межа року, якщо вона відома (напр. 1996 для авто, що відповіли через OBD2).
     public init(vin raw: String, currentYear: Int = Calendar.current.component(.year, from: Date()), minYear: Int? = nil) {
         let vin = raw.uppercased().filter { $0.isLetter || $0.isNumber }
         self.vin = vin
         let chars = Array(vin)
+        region = chars.first.map(VINRegion.of) ?? .other
         guard chars.count == 17 else {
-            manufacturer = nil; country = nil; modelYear = nil; yearCandidates = []; yearNote = nil
+            manufacturer = nil; country = nil; modelYear = nil; yearCandidates = []; yearNote = nil; brandInfo = nil
             return
         }
+        brandInfo = BrandVIN.decode(vin)
         let wmi = String(chars[0..<3])
         manufacturer = VINInfo.manufacturer(for: wmi)
         country = VINInfo.country(for: String(chars[0..<2]))
@@ -33,13 +39,22 @@ public struct VINInfo: Hashable, Sendable {
             let modern = !(chars[6].isNumber)
             candidates = candidates.filter { modern ? $0 >= 2010 : $0 < 2010 }
         }
+        // Mercedes не кодує рік у 10-му символі — покладаємося на роки випуску шасі
+        if BrandVIN.mercedesWMI.contains(wmi) { candidates = [] }
+        // Роки випуску моделі допомагають вибрати правильний варіант (напр. «E» у Passat B7 — 2014, а не 1984)
+        if candidates.count > 1, let range = brandInfo?.years {
+            let inRange = candidates.filter { range.contains($0) }
+            if !inRange.isEmpty { candidates = inRange }
+        }
         yearCandidates = candidates
         if candidates.count == 1 {
             modelYear = candidates[0]
-            yearNote = northAmerica ? nil : "Європейські виробники не завжди кодують рік у 10-му символі — звірте з техпаспортом."
+            yearNote = northAmerica || brandInfo != nil ? nil : "Європейські виробники не завжди кодують рік у 10-му символі — звірте з техпаспортом."
         } else {
             modelYear = nil
-            if candidates.isEmpty {
+            if let r = brandInfo?.years {
+                yearNote = "Рік у цьому VIN не закодовано, але модель випускалась у \(r.lowerBound)–\(r.upperBound) роках."
+            } else if candidates.isEmpty {
                 yearNote = "Рік у цьому VIN не закодовано (так буває в багатьох європейських авто, особливо старших)."
             } else {
                 yearNote = "За VIN рік однозначно не визначити: та сама позначка означає \(candidates.map(String.init).joined(separator: " або ")). Для старих європейських авто рік часто взагалі не закодовано в цьому символі — дивіться техпаспорт."
@@ -50,6 +65,9 @@ public struct VINInfo: Hashable, Sendable {
     /// Рік текстом: «2014», «1986 або 2016» чи «не визначено».
     public var yearText: String {
         if let y = modelYear { return "\(y)" }
+        if let r = brandInfo?.years, yearCandidates.isEmpty || yearCandidates.allSatisfy({ !r.contains($0) }) {
+            return "\(r.lowerBound)–\(r.upperBound) (роки випуску моделі)"
+        }
         if !yearCandidates.isEmpty { return yearCandidates.map(String.init).joined(separator: " або ") }
         return "не визначено"
     }

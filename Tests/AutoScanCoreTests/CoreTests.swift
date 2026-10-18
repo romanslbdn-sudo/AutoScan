@@ -226,7 +226,11 @@ final class DemoScenarioTests: XCTestCase {
             if let v = sc.vin {
                 let info = VINInfo(vin: v, currentYear: 2026, minYear: 1996)
                 XCTAssertNotNil(info.manufacturer, sc.id)
-                XCTAssertEqual(info.modelYear, sc.year, sc.id)
+                if let range = info.brandInfo?.years, info.modelYear == nil {
+                    XCTAssertTrue(range.contains(sc.year), sc.id)   // Mercedes: рік за роками випуску шасі
+                } else {
+                    XCTAssertEqual(info.modelYear, sc.year, sc.id)
+                }
             }
             let status = try await obd.monitorStatus()
             XCTAssertEqual(status?.isDiesel, sc.isDiesel, sc.id)
@@ -418,5 +422,27 @@ final class VINYearTests: XCTestCase {
     func testNorthAmericaRule() {
         XCTAssertEqual(VINInfo(vin: "1M8GDM9AXKP042788", currentYear: 2026).modelYear, 1989)
         XCTAssertEqual(VINInfo(vin: "1FAHP3F2XCL123456", currentYear: 2026).modelYear, 2012)
+    }
+}
+
+
+final class BrandVINTests: XCTestCase {
+    func testVAGModelPicksYear() {
+        let v = VINInfo(vin: "WVWZZZ3CZEE123456", currentYear: 2026)
+        XCTAssertEqual(v.brandInfo?.model, "VW Passat B6 / B7 / CC")
+        XCTAssertEqual(v.modelYear, 2014)       // «E» = 1984 або 2014; Passat B7 — 2014
+        XCTAssertEqual(v.region, .europe)
+    }
+
+    func testMercedesChassis() {
+        let v = VINInfo(vin: "WDB1240231A123456", currentYear: 2026)
+        XCTAssertEqual(v.brandInfo?.model, "Mercedes E-клас W124")
+        XCTAssertNil(v.modelYear)
+        XCTAssertEqual(v.yearText, "1984–1997 (роки випуску моделі)")
+    }
+
+    func testRegion() {
+        XCTAssertEqual(VINInfo(vin: "1FAHP3F2XCL123456").region, .northAmerica)
+        XCTAssertEqual(VINInfo(vin: "JTNB11HK0G3123456").region, .asia)
     }
 }

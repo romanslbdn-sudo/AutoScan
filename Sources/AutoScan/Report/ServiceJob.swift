@@ -155,6 +155,9 @@ extension AppModel {
     /// Назва авто для акту: з демо, VIN або вказана вручну марка.
     var carTitleGuess: String {
         if let d = demoScenario { return "\(d.car), \(d.engine), \(d.year)" }
+        if let v = vin, let b = v.brandInfo {
+            return [b.model, v.modelYear.map { "\($0) р." }].compactMap { $0 }.joined(separator: ", ")
+        }
         if let v = vin, let m = v.manufacturer {
             return [m, v.modelYear.map { "\($0) р." }].compactMap { $0 }.joined(separator: ", ")
         }

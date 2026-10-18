@@ -144,6 +144,11 @@ struct VINSearchView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Розшифровка VIN", systemImage: "barcode.viewfinder").font(Theme.headline).foregroundStyle(Theme.textSecondary)
                 InfoRow(label: "Виробник", value: i.manufacturer ?? "не визначено")
+                if let b = i.brandInfo {
+                    InfoRow(label: "Модель", value: b.model)
+                    Text(b.detail).font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
                 InfoRow(label: "Країна", value: i.country ?? "не визначено")
                 InfoRow(label: "Модельний рік", value: i.yearText)
                 if let note = i.yearNote {
@@ -151,7 +156,12 @@ struct VINSearchView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 InfoRow(label: "Серійний номер", value: String(i.vin.suffix(6)), mono: true)
-                Text("Працює без інтернету, для будь-якого авто.")
+                Divider().overlay(Theme.stroke)
+                Label(i.region.title, systemImage: "globe.europe.africa")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Text(i.region.explanation).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Стандарт визначено автоматично за першими символами. Працює без інтернету.")
                     .font(Theme.caption).foregroundStyle(Theme.textTertiary)
             }
         }

@@ -135,7 +135,9 @@ private struct VehicleCard: View {
 
     var body: some View {
         let d = model.details
-        let title = [d?.make ?? model.vin?.brandKey, d?.model].compactMap { $0 }.joined(separator: " ")
+        let title = d?.model != nil
+            ? [d?.make ?? model.vin?.brandKey, d?.model].compactMap { $0 }.joined(separator: " ")
+            : (model.vin?.brandInfo?.model ?? [d?.make ?? model.vin?.brandKey].compactMap { $0 }.joined(separator: " "))
         let year = d?.year ?? model.vin?.modelYear
         let displacement = model.displacementText(live)
         let turbo = model.turboText(live)
