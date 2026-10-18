@@ -182,7 +182,7 @@ final class DemoNormTests: XCTestCase {
 
     func testDemoIdleVerdicts() async throws {
         let codes = ["P0171", "P0301"]
-        let ctx = try await simulate(offset: 0, codes: codes, seconds: 6)
+        let ctx = try await simulate(offset: 0, codes: codes, seconds: 14)
         for code in codes {
             for check in NormRules.checks(for: code) {
                 let r = check.evaluate(ctx)
