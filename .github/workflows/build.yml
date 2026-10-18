@@ -1,0 +1,43 @@
+name: Збірка AutoScan.dmg
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Версія Swift
+        run: swift --version
+
+      - name: Тести ядра
+        run: swift test
+
+      - name: Збірка .app і .dmg
+        env:
+          VERSION: 1.0.${{ github.run_number }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: bash scripts/build_dmg.sh
+
+      - name: Зберегти DMG як артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoScan-dmg
+          path: dist/AutoScan.dmg
+
+      - name: Опублікувати реліз
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v1.0.${{ github.run_number }}"
+          gh release create "$TAG" dist/AutoScan.dmg \
+            --title "AutoScan $TAG" \
+            --notes "Завантажте AutoScan.dmg нижче, відкрийте і перетягніть AutoScan у Applications. Перший запуск — див. файл «Як відкрити вперше» всередині DMG." \
+            --latest
