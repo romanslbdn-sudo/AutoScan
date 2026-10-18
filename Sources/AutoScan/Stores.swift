@@ -16,14 +16,27 @@ final class LiveStore: ObservableObject, @unchecked Sendable {
 
     static let historyLimit = 120
 
+    /// Згладжування: прибирає дрібне «тремтіння» значень. Лямбда-зонди й оберти не згладжуються,
+    /// бо їхні швидкі зміни важливі для діагностики (перемикання зонда, пропуски запалювання).
+    var smoothing: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _smoothing }
+        set { lock.lock(); _smoothing = newValue; lock.unlock(); UserDefaults.standard.set(newValue, forKey: "live.smoothing") }
+    }
+    private var _smoothing = UserDefaults.standard.object(forKey: "live.smoothing") as? Bool ?? true
+    private static let rawPIDs: Set<UInt8> = [0x0C, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x0D, 0xA4]
+
     private let lock = NSLock()
     private var bufValues: [UInt8: Double] = [:]
     private var bufHistory: [UInt8: [Double]] = [:]
     private var dirty = false
 
     /// Записати значення (можна з будь-якого потоку).
-    func record(_ pid: UInt8, _ value: Double) {
+    func record(_ pid: UInt8, _ raw: Double) {
         lock.lock()
+        var value = raw
+        if _smoothing, !Self.rawPIDs.contains(pid), let prev = bufValues[pid] {
+            value = prev + (raw - prev) * 0.45
+        }
         bufValues[pid] = value
         var h = bufHistory[pid] ?? []
         h.append(value)

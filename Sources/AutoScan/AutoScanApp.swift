@@ -45,8 +45,11 @@ struct AutoScanApp: App {
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(!model.connection.isConnected)
                 Divider()
-                Button("Відключитися") { model.disconnect() }
+                Button("Завершити діагностику") { model.finishSession() }
+                    .keyboardShortcut("e", modifiers: .command)
                     .disabled(!model.connection.isConnected)
+                Button("Нова діагностика…") { model.finishSession(startNew: true) }
+                    .keyboardShortcut("n", modifiers: .command)
             }
         }
     }
@@ -143,6 +146,19 @@ struct Sidebar: View {
             SidebarItem(screen: .log, badge: nil)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
+
+            if model.connection.isConnected {
+                Button {
+                    model.finishSession()
+                } label: {
+                    Label("Завершити діагностику", systemImage: "stop.circle")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SubtleButtonStyle(color: Theme.danger))
+                .padding(.horizontal, 12)
+                .help("Відключитися від авто й повернутися на початковий екран, щоб почати нову діагностику")
+            }
 
             ConnectionBadge()
                 .padding(12)

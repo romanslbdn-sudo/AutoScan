@@ -315,7 +315,7 @@ final class MultiPIDTests: XCTestCase {
 
 final class RetroTests: XCTestCase {
     func testRetroSystems() {
-        XCTAssertEqual(RetroSystems.all.count, 5)
+        XCTAssertEqual(RetroSystems.all.count, 9)
         let ford = RetroSystems.all.first { $0.id == "ford-eec4" }!
         XCTAssertTrue(ford.lookup("11")!.isInfo)
         XCTAssertEqual(ford.lookup("21")?.severity, 2)
@@ -334,5 +334,59 @@ final class RetroTests: XCTestCase {
         XCTAssertNotNil(db.generic["P0264"])
         XCTAssertNotNil(db.generic["P0733"])
         XCTAssertNotNil(db.generic["U0164"])
+    }
+}
+
+final class VehicleDetailsTests: XCTestCase {
+    func testNHTSAParse() {
+        let json = """
+        {"Count":1,"Results":[{"Make":"VOLKSWAGEN","Model":"Passat","ModelYear":"2014","DisplacementL":"1.8","EngineCylinders":"4",
+        "EngineKW":"125","FuelTypePrimary":"Gasoline","Turbo":"Yes","BodyClass":"Sedan/Saloon","DriveType":"FWD/Front-Wheel Drive",
+        "TransmissionStyle":"Automatic","PlantCountry":"UNITED STATES (USA)","PlantCity":"CHATTANOOGA","Series":"","Trim":"SE","EngineModel":"CPKA"}]}
+        """
+        let d = NHTSADecoder.parse(Data(json.utf8))!
+        XCTAssertEqual(d.make, "Volkswagen")
+        XCTAssertEqual(d.displacementL, 1.8)
+        XCTAssertEqual(d.fuel, "бензин")
+        XCTAssertEqual(d.turbo, true)
+        XCTAssertEqual(d.body, "седан")
+        XCTAssertEqual(d.drive, "передній")
+        XCTAssertEqual(d.transmission, "автомат")
+        XCTAssertEqual(d.engineSummary, "1,8 л · бензин · турбо")
+        XCTAssertEqual(d.powerText, "125 кВт (170 к.с.)")
+    }
+
+    func testEmptyNHTSA() {
+        let json = #"{"Results":[{"Make":"","Model":"","ModelYear":"","ErrorCode":"8"}]}"#
+        XCTAssertNil(NHTSADecoder.parse(Data(json.utf8)))
+    }
+
+    func testDisplacementEstimate() {
+        // 1.8 л на холостому: ≈3.1 г/с при 790 об/хв, 33 кПа, 31 °C
+        let est = EngineEstimator.displacement(mafGs: 3.1, mapKPa: 33, rpm: 790, intakeC: 31, diesel: false)
+        XCTAssertNotNil(est)
+        XCTAssertTrue((1.4...2.2).contains(est!), "\(est!)")
+    }
+
+    func testDemoDetails() {
+        let d = DemoScenario.with(id: "megane").details
+        XCTAssertEqual(d.fuel, "дизель")
+        XCTAssertEqual(d.turbo, true)
+        XCTAssertEqual(d.displacementL, 1.5)
+        XCTAssertEqual(VehicleInfoCodes.obdStandard(6), "EOBD (Європа)")
+        XCTAssertEqual(VehicleInfoCodes.fuelType(4), "дизель")
+        XCTAssertFalse(PIDHelp.of(0x04).what.isEmpty)
+        XCTAssertNotNil(PIDHelp.of(0x07).range)
+    }
+
+    func testFuelTypeFromDemoCar() async throws {
+        let session = ELM327Session(transport: DemoTransport(scenario: DemoScenario.with(id: "mercedes")))
+        try await session.transport.open()
+        let obd = OBDService(session: session)
+        try await obd.initialize()
+        let f = await obd.readByte(0x51)
+        XCTAssertEqual(f.flatMap(VehicleInfoCodes.fuelType), "дизель")
+        let v = try await obd.read(PIDTable.definition(0x74)!)
+        XCTAssertNotNil(v)
     }
 }

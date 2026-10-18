@@ -20,6 +20,11 @@ struct OverviewView: View {
                             } label: { Label("Оновити", systemImage: "arrow.clockwise") }
                             .buttonStyle(SubtleButtonStyle())
                             ReportButton()
+                            Button {
+                                model.finishSession(startNew: true)
+                            } label: { Label("Нова діагностика", systemImage: "plus.circle") }
+                            .buttonStyle(AccentButtonStyle())
+                            .help("Завершити поточну діагностику й підключитися до іншого авто")
                         }
                     }
 
@@ -126,36 +131,110 @@ struct NotConnectedView: View {
 
 private struct VehicleCard: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var live: LiveStore
 
     var body: some View {
+        let d = model.details
+        let title = [d?.make ?? model.vin?.brandKey, d?.model].compactMap { $0 }.joined(separator: " ")
+        let year = d?.year ?? model.vin?.modelYear
+        let displacement = model.displacementText(live)
+        let turbo = model.turboText(live)
         Card {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Автомобіль", systemImage: "car.fill").font(Theme.headline).foregroundStyle(Theme.textSecondary)
-                if let v = model.vin {
-                    Text(v.manufacturer ?? "Марку не визначено")
-                        .font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.textPrimary)
-                    VStack(spacing: 8) {
-                        InfoRow(label: "VIN", value: v.vin, mono: true)
-                        if let y = v.modelYear { InfoRow(label: "Модельний рік", value: "\(y)") }
-                        if let c = v.country { InfoRow(label: "Країна виробництва", value: c) }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Автомобіль", systemImage: "car.fill").font(Theme.headline).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    if model.isLookingUpVIN {
+                        ProgressView().controlSize(.small)
+                        Text("шукаю дані за VIN…").font(Theme.caption).foregroundStyle(Theme.textTertiary)
                     }
-                } else {
-                    Text("VIN не отримано").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                    Text("Деякі авто (особливо до 2005 р.) не передають VIN через OBD2. Марку можна вказати вручну в розділі «Бази авто».")
-                        .font(Theme.caption).foregroundStyle(Theme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Divider().overlay(Theme.stroke)
-                VStack(spacing: 8) {
-                    InfoRow(label: "Сканер", value: model.connInfo.adapterKind.isEmpty ? model.adapterName : model.connInfo.adapterKind)
+
+                // Назва і головне про двигун — великими літерами
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title.isEmpty ? (model.vin == nil ? "Марку не визначено" : "Модель невідома") : title)
+                        .font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.textPrimary)
+                    HStack(spacing: 6) {
+                        if let y = year { Pill(text: "\(y) р.", color: Theme.textSecondary) }
+                        if let dsp = displacement { Pill(text: dsp.0, color: Theme.accent, icon: "engine.combustion") }
+                        if let f = model.fuelText { Pill(text: f, color: model.fuelText == "дизель" ? Theme.warning : Theme.info, icon: "fuelpump") }
+                        if let t = turbo, t.0.hasPrefix("так") || t.0.hasPrefix("ймовірно") { Pill(text: "турбо", color: Theme.danger, icon: "tornado") }
+                    }
+                }
+
+                // Двигун
+                section("Двигун") {
+                    if let dsp = displacement { infoRow("Об'єм", dsp.0, note: dsp.1) }
+                    if let f = model.fuelText { infoRow("Паливо", f) }
+                    if let t = turbo { infoRow("Турбіна", t.0, note: t.1) }
+                    if let c = d?.cylinders { infoRow("Циліндрів", "\(c)") }
+                    if let p = d?.powerText { infoRow("Потужність", p) }
+                    if let code = d?.engineCode { infoRow("Код / модель двигуна", code) }
+                    if displacement == nil && d?.cylinders == nil {
+                        Text("Об'єм з'явиться, щойно двигун попрацює на холостому (програма оцінить його за витратою повітря), або коли знайдуться дані за VIN.")
+                            .font(Theme.caption).foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                // Кузов і трансмісія
+                if d?.body != nil || d?.drive != nil || d?.transmission != nil || d?.trim != nil {
+                    section("Кузов і трансмісія") {
+                        if let b = d?.body { infoRow("Кузов", b) }
+                        if let t = d?.trim { infoRow("Комплектація", t) }
+                        if let tr = d?.transmission { infoRow("Коробка", tr) }
+                        if let dr = d?.drive { infoRow("Привід", dr) }
+                    }
+                }
+
+                // Паспорт
+                section("Паспорт авто") {
+                    if let v = model.vin {
+                        infoRow("VIN", v.vin, mono: true)
+                        if let c = v.country { infoRow("Країна виробництва", c) }
+                    } else {
+                        Text("Авто не передало VIN (часто до 2005 р.). Марку можна вказати вручну в «Бази авто».")
+                            .font(Theme.caption).foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let p = d?.plant { infoRow("Завод", p) }
+                    if let std = model.obdStandard { infoRow("Стандарт діагностики", std) }
+                }
+
+                // Зв'язок
+                section("Зв'язок") {
+                    infoRow("Сканер", model.connInfo.adapterKind.isEmpty ? model.adapterName : model.connInfo.adapterKind)
                     if let note = model.connInfo.adapterNote {
                         Label(note, systemImage: "exclamationmark.triangle")
                             .font(Theme.caption).foregroundStyle(Theme.warning)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    InfoRow(label: "Протокол", value: model.connInfo.protocolName)
-                    InfoRow(label: "Параметрів доступно", value: "\(model.supportedPIDs.count)")
+                    infoRow("Протокол", model.connInfo.protocolName)
+                    infoRow("Параметрів передає авто", "\(PIDTable.all.filter { model.isSupported($0.pid) }.count)")
                 }
+
+                if let src = d?.source {
+                    Text("Джерело даних про модель і двигун: \(src). Для європейських авто онлайн-база VIN буває неповною.")
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textTertiary).kerning(0.5)
+            content()
+        }
+    }
+
+    private func infoRow(_ label: String, _ value: String, note: String? = nil, mono: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            InfoRow(label: label, value: value, mono: mono)
+            if let note, !note.isEmpty {
+                Text(note).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }
@@ -163,6 +242,7 @@ private struct VehicleCard: View {
 
 private struct StatusCard: View {
     @EnvironmentObject var model: AppModel
+    @State private var confirmClear = false
 
     var body: some View {
         let mil = model.monitor?.milOn ?? false
@@ -202,9 +282,22 @@ private struct StatusCard: View {
                     if !model.dtcs.isEmpty {
                         Button("Переглянути помилки →") { model.screen = .faults }
                             .buttonStyle(.link)
+                        Button {
+                            confirmClear = true
+                        } label: {
+                            Label(model.isClearing ? "Стираю…" : "Стерти помилки", systemImage: "trash")
+                        }
+                        .buttonStyle(SubtleButtonStyle(color: Theme.danger))
+                        .disabled(model.isClearing)
                     }
                 }
             }
+        }
+        .confirmationDialog("Стерти всі помилки?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Стерти", role: .destructive) { Task { await model.clearDTCs() } }
+            Button("Скасувати", role: .cancel) {}
+        } message: {
+            Text("Запалювання має бути увімкнене, двигун — заглушений. Скинуться й монітори готовності. Якщо причину не усунуто — помилка повернеться.")
         }
     }
 
@@ -230,7 +323,11 @@ private struct QuickGauges: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
-                Label("Зараз", systemImage: "speedometer").font(Theme.headline).foregroundStyle(Theme.textSecondary)
+                HStack {
+                    Label("Зараз", systemImage: "speedometer").font(Theme.headline).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    DemoPedalButton()
+                }
                 HStack(spacing: 12) {
                     RingGauge(pid: 0x0C, label: "Оберти", warnAbove: 6000)
                     RingGauge(pid: 0x05, label: "Т° рідини", warnAbove: 105)
@@ -293,13 +390,19 @@ private struct KeyReadings: View {
                     Spacer()
                     Button("Усі параметри →") { model.screen = .live }.buttonStyle(.link)
                 }
+                Text("Натисніть ⓘ біля параметра — там пояснення простими словами і норма. Жовтим підсвічено значення поза нормою.")
+                    .font(Theme.caption).foregroundStyle(Theme.textTertiary)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
                     ForEach(items) { def in
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(def.shortName).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                            HStack(spacing: 4) {
+                                Text(def.shortName).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                                Spacer(minLength: 2)
+                                PIDInfoButton(pid: def.pid)
+                            }
                             HStack(alignment: .firstTextBaseline, spacing: 3) {
                                 Text(live.values[def.pid].map { def.format($0) } ?? "…")
-                                    .font(Theme.number(18)).foregroundStyle(Theme.textPrimary)
+                                    .font(Theme.number(18)).foregroundStyle(valueColor(def.pid, live.values[def.pid]))
                                 Text(def.unit).font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
                             }
                         }

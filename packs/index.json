@@ -2,6 +2,21 @@
  "version": 1,
  "packs": [
   {
+   "id": "vag",
+   "brand": "VW / Audi / Škoda / Seat",
+   "title": "VAG: заводські коди",
+   "version": "1.0",
+   "matches": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "Seat",
+    "Cupra"
+   ],
+   "file": "vag.json",
+   "codes": 9
+  },
+  {
    "id": "ford",
    "brand": "Ford",
    "title": "Ford: заводські коди",

@@ -407,7 +407,7 @@ struct ConnectSheet: View {
             statusLine
             HStack {
                 if model.connection.isConnected {
-                    Button("Відключитися") { model.disconnect() }
+                    Button("Завершити діагностику") { model.finishSession() }
                         .buttonStyle(SubtleButtonStyle(color: Theme.danger))
                 }
                 Spacer()

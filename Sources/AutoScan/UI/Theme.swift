@@ -178,6 +178,106 @@ struct SubtleButtonStyle: ButtonStyle {
     }
 }
 
+/// Педаль газу для демо-режиму: тримаєте — оберти ростуть, відпускаєте — падають.
+struct DemoPedalButton: View {
+    @EnvironmentObject var model: AppModel
+    @State private var level: Double = 0
+    @State private var pressing = false
+    @State private var task: Task<Void, Never>?
+
+    var body: some View {
+        if model.isDemo {
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.cardRaised)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(LinearGradient(colors: [Theme.ok, Theme.warning, Theme.danger], startPoint: .leading, endPoint: .trailing))
+                        .opacity(0.85)
+                        .frame(width: max(0, 170 * level))
+                    HStack(spacing: 6) {
+                        Image(systemName: "pedal.accelerator.fill")
+                        Text(pressing ? "Газ: \(Int(level * 100)) %" : "Тримайте — газ").font(.system(size: 12.5, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 12)
+                }
+                .frame(width: 170, height: 34)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { _ in if !pressing { press() } }
+                    .onEnded { _ in release() })
+                .help("Демо: тримайте кнопку — двигун набирає оберти, відпустіть — газ скинуто")
+            }
+        }
+    }
+
+    private func press() {
+        pressing = true
+        task?.cancel()
+        task = Task { @MainActor in
+            while pressing && !Task.isCancelled {
+                level = min(1, level + 0.035)
+                model.demoPedal(level)
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+    }
+
+    private func release() {
+        pressing = false
+        task?.cancel()
+        model.demoPedal(nil)
+        task = Task { @MainActor in
+            while level > 0 && !Task.isCancelled {
+                level = max(0, level - 0.08)
+                try? await Task.sleep(nanoseconds: 40_000_000)
+            }
+        }
+    }
+}
+
+/// Кнопка «ⓘ» з поясненням параметра простими словами.
+struct PIDInfoButton: View {
+    let pid: UInt8
+    @State private var show = false
+
+    var body: some View {
+        Button { show.toggle() } label: {
+            Image(systemName: "info.circle").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+        }
+        .buttonStyle(.plain)
+        .help("Що це за параметр?")
+        .popover(isPresented: $show, arrowEdge: .bottom) { PIDHelpView(pid: pid) }
+    }
+}
+
+struct PIDHelpView: View {
+    let pid: UInt8
+    var body: some View {
+        let def = PIDTable.definition(pid)
+        let help = PIDHelp.of(pid)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(def?.name ?? "").font(Theme.headline)
+            Text(help.what).font(Theme.body).fixedSize(horizontal: false, vertical: true)
+            if let n = help.normal {
+                Label {
+                    Text(n).font(Theme.body).fixedSize(horizontal: false, vertical: true)
+                } icon: { Image(systemName: "checkmark.circle").foregroundStyle(Theme.ok) }
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+}
+
+/// Колір значення: попереджувальний, якщо воно поза нормою.
+func valueColor(_ pid: UInt8, _ value: Double?) -> Color {
+    guard let v = value, let r = PIDHelp.of(pid).range else { return Theme.textPrimary }
+    // Для температури рідини холодний двигун — не несправність, тож перевіряємо лише перегрів
+    if pid == 0x05 || pid == 0x67 { return v > r.upperBound ? Theme.danger : Theme.textPrimary }
+    return r.contains(v) ? Theme.textPrimary : Theme.warning
+}
+
 /// Підпис + значення в один рядок.
 struct InfoRow: View {
     let label: String

@@ -81,6 +81,12 @@ final class AppModel: ObservableObject {
     // Авто
     @Published private(set) var vin: VINInfo?
     @Published private(set) var monitor: MonitorStatus?
+    /// Модель, двигун, кузов тощо — з онлайн-бази VIN або з демо-авто.
+    @Published private(set) var details: VehicleDetails?
+    @Published private(set) var isLookingUpVIN = false
+    /// Тип палива і стандарт OBD — повідомляє саме авто.
+    @Published private(set) var fuelFromCar: String?
+    @Published private(set) var obdStandard: String?
     @Published var manualBrand: String = UserDefaults.standard.string(forKey: "manualBrand") ?? "" {
         didSet { UserDefaults.standard.set(manualBrand, forKey: "manualBrand") }
     }
@@ -131,7 +137,8 @@ final class AppModel: ObservableObject {
         // Єдиний «пульс» оновлення екрана: 4 рази на секунду
         flushTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                // ~7 разів на секунду: плавно, але без зайвого навантаження
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 guard let self else { return }
                 self.live.flush()
                 self.logStore.flush()
@@ -178,7 +185,7 @@ final class AppModel: ObservableObject {
         demoScenario = kind == .demo ? demo : nil
         connection = .connecting("Підключення до адаптера…")
         logStore.clear()
-        vin = nil; monitor = nil; dtcs = []
+        vin = nil; monitor = nil; dtcs = []; details = nil; fuelFromCar = nil; obdStandard = nil
 
         // Різні сканери налаштовані по-різному, тому пробуємо кілька варіантів по черзі:
         // для USB — різні швидкості порту, для Wi‑Fi — найпоширеніші адреси.
@@ -280,6 +287,21 @@ final class AppModel: ObservableObject {
         live.reset(keepValues: false)
     }
 
+    /// Завершити діагностику: відключитися і очистити все про попереднє авто,
+    /// щоб одразу почати нову — без перезапуску програми.
+    func finishSession(startNew: Bool = false) {
+        disconnect()
+        dtcs = []
+        vin = nil; monitor = nil; details = nil
+        fuelFromCar = nil; obdStandard = nil
+        lastDTCRead = nil
+        connInfo = ConnectionInfo()
+        adapterName = ""
+        logStore.clear()
+        screen = .overview
+        if startNew { showConnectSheet = true }
+    }
+
     private func handleDrop(_ reason: String) {
         guard connection.isConnected else { return }
         disconnect(silently: true)
@@ -298,6 +320,63 @@ final class AppModel: ObservableObject {
         guard let svc = service else { return }
         if let v = try? await svc.readVIN() { vin = VINInfo(vin: v) } else { vin = nil }
         monitor = try? await svc.monitorStatus()
+        fuelFromCar = await svc.readByte(0x51).flatMap(VehicleInfoCodes.fuelType)
+        obdStandard = await svc.readByte(0x1C).flatMap(VehicleInfoCodes.obdStandard)
+        if let demo = demoScenario {
+            details = demo.details
+        } else if let v = vin?.vin {
+            await lookupVIN(v)
+        } else {
+            details = nil
+        }
+    }
+
+    /// Шукає модель, двигун і комплектацію за VIN у безкоштовній онлайн-базі.
+    func lookupVIN(_ vin: String) async {
+        guard let url = NHTSADecoder.url(vin: vin) else { return }
+        isLookingUpVIN = true
+        defer { isLookingUpVIN = false }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+        details = NHTSADecoder.parse(data)
+    }
+
+    /// Тип палива: з бази VIN, від авто або за статусом моніторів (дизель / бензин).
+    var fuelText: String? {
+        details?.fuel ?? fuelFromCar ?? monitor.map { $0.isDiesel ? "дизель" : "бензин" }
+    }
+
+    /// Чи є турбіна: з бази VIN / демо, або за тиском наддуву, який бачили датчики.
+    func turboText(_ live: LiveStore) -> (String, String)? {
+        if let t = details?.turbo { return (t ? "так" : "ні (атмосферний)", details?.source ?? "") }
+        if EngineEstimator.turbo(mapHistory: live.history[0x0B] ?? [], baro: live.values[0x33], diesel: monitor?.isDiesel ?? false) == true {
+            return ("так", "виявлено тиск наддуву за датчиком MAP")
+        }
+        if monitor?.isDiesel == true { return ("ймовірно так", "майже всі сучасні дизелі з турбіною") }
+        return nil
+    }
+
+    /// Робочий об'єм: з бази VIN / демо, або приблизна оцінка за датчиками на холостому ходу.
+    func displacementText(_ live: LiveStore) -> (String, String)? {
+        if let d = details?.displacementL {
+            return (String(format: "%.1f л", d).replacingOccurrences(of: ".", with: ","), details?.source ?? "")
+        }
+        let v = live.values
+        if let maf = v[0x10], let map = v[0x0B], let rpm = v[0x0C], let iat = v[0x0F],
+           (v[0x0D] ?? 0) < 3,
+           let est = EngineEstimator.displacement(mafGs: maf, mapKPa: map, rpm: rpm, intakeC: iat, diesel: monitor?.isDiesel ?? false) {
+            return ("≈ " + String(format: "%.1f л", est).replacingOccurrences(of: ".", with: ","), "оцінка за витратою повітря на холостому (±20 %)")
+        }
+        return nil
+    }
+
+    // MARK: Демо-педаль газу
+
+    /// Педаль газу в демо-режимі: 0…1 — натиснута, nil — відпущена.
+    func demoPedal(_ value: Double?) {
+        (transport as? DemoTransport)?.setPedal(value)
     }
 
     func readDTCs() async {
@@ -390,10 +469,12 @@ final class AppModel: ObservableObject {
                 cycle += 1
                 let defs = pids.compactMap { PIDTable.definition($0) }
                 let real = defs.filter { !$0.isVirtual }
+                let groupable = real.filter(\.multiSafe)
+                let single = real.filter { !$0.multiSafe }
 
-                // Групи запитів: у швидкому режимі по 6 параметрів за раз, інакше по одному
+                // Групи запитів: у швидкому режимі прості параметри по 6 за раз, складні — по одному
                 let groups: [[PIDDefinition]] = multi
-                    ? stride(from: 0, to: real.count, by: 6).map { Array(real[$0..<min($0 + 6, real.count)]) }
+                    ? stride(from: 0, to: groupable.count, by: 6).map { Array(groupable[$0..<min($0 + 6, groupable.count)]) } + single.map { [$0] }
                     : real.map { [$0] }
                 for group in groups {
                     if Task.isCancelled { return }

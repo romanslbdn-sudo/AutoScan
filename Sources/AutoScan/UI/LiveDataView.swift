@@ -34,6 +34,8 @@ struct LiveDataView: View {
                             .labelsHidden()
                             .frame(width: 84)
                             .help("Плитки або компактний список")
+                            SmoothingToggle()
+                            DemoPedalButton()
                             Button {
                                 model.livePaused.toggle()
                             } label: {
@@ -101,6 +103,19 @@ struct LiveDataView: View {
     }
 }
 
+/// Перемикач згладжування значень.
+struct SmoothingToggle: View {
+    @EnvironmentObject var live: LiveStore
+    @State private var on = UserDefaults.standard.object(forKey: "live.smoothing") as? Bool ?? true
+
+    var body: some View {
+        Toggle(isOn: $on) { Text("Згладжування").font(.system(size: 12)) }
+            .toggleStyle(.checkbox)
+            .onChange(of: on) { live.smoothing = $0 }
+            .help("Прибирає дрібне «тремтіння» цифр і графіків. Лямбда-зонди й оберти завжди показуються без згладжування — їхні швидкі зміни важливі для діагностики.")
+    }
+}
+
 /// Один параметр рядком (для компактного списку).
 struct PIDRow: View {
     @EnvironmentObject var live: LiveStore
@@ -111,6 +126,7 @@ struct PIDRow: View {
         let value = live.values[def.pid]
         let hist = live.history[def.pid] ?? []
         HStack(spacing: 12) {
+            PIDInfoButton(pid: def.pid)
             VStack(alignment: .leading, spacing: 1) {
                 Text(def.name).font(.system(size: 12.5)).foregroundStyle(supported ? Theme.textPrimary : Theme.textTertiary)
                     .lineLimit(1)
@@ -121,12 +137,12 @@ struct PIDRow: View {
             }
             Spacer(minLength: 8)
             if supported {
-                Sparkline(values: hist, color: Theme.accent)
+                Sparkline(values: hist, color: Theme.accent, minSpan: def.minChartSpan)
                     .frame(width: 140, height: 24)
             }
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(supported ? (value.map { def.format($0) } ?? "…") : "—")
-                    .font(Theme.number(15)).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.number(15)).foregroundStyle(valueColor(def.pid, value))
                 Text(def.unit).font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
             }
             .frame(width: 110, alignment: .trailing)
@@ -148,12 +164,13 @@ struct PIDTile: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(def.shortName).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
                     Spacer()
-                    Text(def.category.rawValue).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                    PIDInfoButton(pid: def.pid)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(supported ? (value.map { def.format($0) } ?? "…") : "—")
-                        .font(Theme.number(30)).foregroundStyle(Theme.textPrimary)
+                        .font(Theme.number(30)).foregroundStyle(valueColor(def.pid, value))
                     Text(def.unit).font(Theme.body).foregroundStyle(Theme.textTertiary)
                     Spacer()
                     if let mn = hist.min(), let mx = hist.max(), hist.count > 2 {
@@ -165,7 +182,7 @@ struct PIDTile: View {
                     }
                 }
                 if supported {
-                    Sparkline(values: hist, color: Theme.accent)
+                    Sparkline(values: hist, color: Theme.accent, minSpan: def.minChartSpan)
                         .frame(height: 54)
                 } else {
                     Text("Це авто не передає цей параметр").font(Theme.caption).foregroundStyle(Theme.textTertiary)
@@ -185,6 +202,8 @@ struct Sparkline: View {
     var color: Color = Theme.accent
     var band: ClosedRange<Double>? = nil
     var yDomain: ClosedRange<Double>? = nil
+    /// Мінімальна висота шкали: дрібні коливання не розтягуються на весь графік.
+    var minSpan: Double = 0
 
     var body: some View {
         Canvas { ctx, size in
@@ -201,11 +220,15 @@ struct Sparkline: View {
             }
             guard pts.count >= 2 else { return }
             let step = size.width / CGFloat(pts.count - 1)
+            // Плавна крива через середини відрізків
+            let points = pts.enumerated().map { CGPoint(x: CGFloat($0.offset) * step, y: y($0.element)) }
             var line = Path()
-            for (i, v) in pts.enumerated() {
-                let p = CGPoint(x: CGFloat(i) * step, y: y(v))
-                if i == 0 { line.move(to: p) } else { line.addLine(to: p) }
+            line.move(to: points[0])
+            for i in 1..<points.count {
+                let mid = CGPoint(x: (points[i - 1].x + points[i].x) / 2, y: (points[i - 1].y + points[i].y) / 2)
+                line.addQuadCurve(to: mid, control: points[i - 1])
             }
+            line.addLine(to: points[points.count - 1])
             var area = line
             area.addLine(to: CGPoint(x: size.width, y: size.height))
             area.addLine(to: CGPoint(x: 0, y: size.height))
@@ -229,7 +252,11 @@ struct Sparkline: View {
         var lo = values.min() ?? 0
         var hi = values.max() ?? 1
         if let b = band { lo = min(lo, b.lowerBound); hi = max(hi, b.upperBound) }
-        if hi - lo < 0.0001 { lo -= 1; hi += 1 }
+        if hi - lo < max(minSpan, 0.0001) {
+            let mid = (hi + lo) / 2
+            let half = max(minSpan, 2) / 2
+            lo = mid - half; hi = mid + half
+        }
         let pad = (hi - lo) * 0.12
         return (lo - pad)...(hi + pad)
     }

@@ -166,7 +166,7 @@ public final class OBDService: @unchecked Sendable {
 
     /// Кілька параметрів одним запитом (до 6 на CAN). Повертає те, що вдалося розібрати.
     public func readMany(_ defs: [PIDDefinition]) async throws -> [UInt8: Double] {
-        let real = defs.filter { !$0.isVirtual }
+        let real = defs.filter { $0.multiSafe }
         guard !real.isEmpty else { return [:] }
         let cmd = "01" + real.map { String(format: "%02X", $0.pid) }.joined()
         let raw = try await session.command(cmd, timeout: 4)
@@ -199,6 +199,14 @@ public final class OBDService: @unchecked Sendable {
         } catch AdapterError.noData {
             return nil
         }
+    }
+
+    /// Перший байт відповіді на PID (для довідкових параметрів: тип палива, стандарт OBD).
+    public func readByte(_ pid: UInt8) async -> UInt8? {
+        guard supportedPIDs.contains(pid),
+              let raw = try? await session.command(String(format: "01%02X", pid)),
+              let data = try? ResponseParser.payload(from: raw, mode: 0x01, pid: pid) else { return nil }
+        return data.first
     }
 
     public func monitorStatus() async throws -> MonitorStatus? {
