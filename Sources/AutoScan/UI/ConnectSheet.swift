@@ -387,8 +387,9 @@ struct ConnectSheet: View {
     // MARK: Додатково
 
     private func advanced<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        DisclosureGroup(isExpanded: $showAdvanced) {
-            VStack(alignment: .leading, spacing: 10) { content() }
+        let inner = content()
+        return DisclosureGroup(isExpanded: $showAdvanced) {
+            VStack(alignment: .leading, spacing: 10) { inner }
                 .padding(.top, 8)
         } label: {
             Text("Додаткові налаштування (зазвичай не потрібні)")
