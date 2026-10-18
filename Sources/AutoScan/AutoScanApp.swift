@@ -8,6 +8,16 @@ struct AutoScanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = AppModel()
 
+    init() {
+        // Службовий режим для перевірки: AutoScan --sample-pdf <шлях> створює зразок акту і виходить.
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--sample-pdf"), i + 1 < args.count {
+            let data = ReportPDF.make(job: .sample, profile: .sample)
+            try? data.write(to: URL(fileURLWithPath: args[i + 1]))
+            exit(data.isEmpty ? 1 : 0)
+        }
+    }
+
     var body: some Scene {
         WindowGroup("AutoScan") {
             RootView()
@@ -75,6 +85,7 @@ struct RootView: View {
         case .faults: FaultsView()
         case .live: LiveDataView()
         case .norm: NormView()
+        case .report: ClientReportView()
         case .packs: PacksView()
         case .log: LogView()
         }
@@ -103,7 +114,7 @@ struct Sidebar: View {
             .padding(.bottom, 22)
 
             VStack(spacing: 3) {
-                ForEach([Screen.overview, .faults, .live, .norm, .packs]) { s in
+                ForEach([Screen.overview, .faults, .live, .norm, .report, .packs]) { s in
                     SidebarItem(screen: s, badge: badge(for: s))
                 }
             }

@@ -4,7 +4,7 @@ import SwiftUI
 import AutoScanCore
 
 enum Screen: String, CaseIterable, Identifiable, Hashable {
-    case overview, faults, live, norm, packs, log
+    case overview, faults, live, norm, report, packs, log
     var id: String { rawValue }
 
     var title: String {
@@ -13,6 +13,7 @@ enum Screen: String, CaseIterable, Identifiable, Hashable {
         case .faults: return "Помилки"
         case .live: return "Живі дані"
         case .norm: return "Норма vs зараз"
+        case .report: return "Звіт клієнту"
         case .packs: return "Бази авто"
         case .log: return "Журнал адаптера"
         }
@@ -24,6 +25,7 @@ enum Screen: String, CaseIterable, Identifiable, Hashable {
         case .faults: return "exclamationmark.triangle"
         case .live: return "waveform.path.ecg"
         case .norm: return "chart.line.uptrend.xyaxis"
+        case .report: return "doc.richtext"
         case .packs: return "shippingbox"
         case .log: return "list.bullet.rectangle"
         }
@@ -333,6 +335,11 @@ final class AppModel: ObservableObject {
         case .overview:
             pids = [0x0C, 0x05, 0x42]
             interval = 400_000_000
+        case .report:
+            // Для знімка стану потрібні основні показники і сигнали для «норма vs зараз»
+            pids = Array(Set([0x0C, 0x05, 0x42, 0x07, 0x06, 0x10, 0x0B, 0x0F, 0x23])
+                .union(NormRules.requiredPIDs(for: uniqueCodes))).sorted()
+            interval = 300_000_000
         default:
             // Інші екрани живих даних не показують — лише зрідка перевіряємо зв'язок
             pids = [0x0C]
