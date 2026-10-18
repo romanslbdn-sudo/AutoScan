@@ -106,6 +106,9 @@ struct ConnectSheet: View {
                         hintRow("dot.radiowaves.left.and.right", "Маленький адаптер без дроту, на ньому або на коробці написано **Bluetooth**, «BLE» або «4.0» — це **Bluetooth**.")
                         hintRow("wifi", "На адаптері чи коробці написано **WiFi** — це **Wi‑Fi**.")
                         hintRow("car", "Найчастіше адаптер виглядає як невелика коробочка, яка вставляється в роз'єм під кермом (біля педалей).")
+                        Divider().overlay(Theme.stroke)
+                        hintRow("checkmark.seal", "**Підходять:** будь-які сканери на ELM327 — Vgate (iCar), Veepeak, Konnwei, OBDLink, V-LINK, а також дешеві китайські клони «ELM327 v1.5 / v2.1».")
+                        hintRow("xmark.seal", "**Не підходять:** фірмові сканери зі своєю програмою (Launch, Autel, Thinkcar), кабелі VAG-COM/VCDS і J2534 — вони працюють лише з програмами виробника.")
                     }
                 }
             }

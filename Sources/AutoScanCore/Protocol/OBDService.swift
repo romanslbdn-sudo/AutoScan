@@ -6,6 +6,10 @@ public struct ConnectionInfo: Sendable {
     public var protocolName: String = ""
     public var protocolNumber: String = ""
     public var isCAN: Bool = true
+    /// Зрозуміла назва сканера: «OBDLink (чип STN)», «клон ELM327 v2.1» тощо.
+    public var adapterKind: String = ""
+    /// Підказка, якщо сканер відомий як нестабільний.
+    public var adapterNote: String? = nil
     public init() {}
 }
 
@@ -33,21 +37,33 @@ public final class OBDService: @unchecked Sendable {
             ?? reset.trimmingCharacters(in: .whitespacesAndNewlines)
 
         progress?("Налаштування адаптера…")
+        // Деякі клони не знають частини команд — помилки тут ігноруємо
         for cmd in ["ATE0", "ATL0", "ATS1", "ATH0", "ATAT1"] {
             _ = try? await session.command(cmd)
         }
         // Заводське значення часу очікування; деякі старі авто відповідають повільно.
         _ = try? await session.command("ATST64")
+        await identifyAdapter()
 
         progress?("Пошук протоколу авто…")
         _ = try await session.command("ATSP0")
         // Перший запит запускає автоматичний пошук протоколу — може тривати до ~10 с.
-        let first = try await session.command("0100", timeout: 15)
         do {
-            let p = try ResponseParser.payload(from: first, mode: 0x01, pid: 0x00)
-            supportedPIDs = Self.decodeSupported(p, offset: 0x00)
-        } catch let e as AdapterError {
-            throw e == .noData ? AdapterError.unableToConnect : e
+            supportedPIDs = try await probe(timeout: 15)
+        } catch let e as AdapterError where [.noData, .unableToConnect, .canError, .busError, .stopped].contains(e) {
+            // Дешеві клони часто не знаходять протокол автоматично — перебираємо вручну
+            session.info("Автопошук протоколу не вдався, перебираю протоколи вручну")
+            var found = false
+            for p in ["6", "8", "7", "9", "5", "4", "3", "1", "2"] {
+                progress?("Пробую протокол: \(Self.protocolName(p))…")
+                _ = try? await session.command("ATSP" + p)
+                if let pids = try? await probe(timeout: 8) {
+                    supportedPIDs = pids
+                    found = true
+                    break
+                }
+            }
+            if !found { throw AdapterError.unableToConnect }
         }
 
         let dpn = (try? await session.command("ATDPN")) ?? ""
@@ -67,6 +83,35 @@ public final class OBDService: @unchecked Sendable {
             offset &+= 0x20
         }
         session.info("Протокол: \(info.protocolName). Підтримуваних параметрів: \(supportedPIDs.count)")
+    }
+
+    /// Перший запит до авто: чи відповідає блок двигуна і які параметри він знає.
+    private func probe(timeout: TimeInterval) async throws -> Set<UInt8> {
+        let raw = try await session.command("0100", timeout: timeout)
+        do {
+            return Self.decodeSupported(try ResponseParser.payload(from: raw, mode: 0x01, pid: 0x00), offset: 0x00)
+        } catch let e as AdapterError {
+            throw e == .noData ? AdapterError.unableToConnect : e
+        }
+    }
+
+    /// Визначає, що за сканер підключено, за його відповідями.
+    private func identifyAdapter() async {
+        let v = info.adapterVersion.uppercased()
+        if let sti = try? await session.command("STI"), sti.uppercased().contains("STN") {
+            info.adapterKind = "OBDLink / чип STN — \(sti.trimmingCharacters(in: .whitespacesAndNewlines))"
+            return
+        }
+        if v.contains("V2.1") {
+            info.adapterKind = "Клон ELM327 v2.1"
+            info.adapterNote = "Сканери з позначкою v2.1 — це здебільшого спрощені китайські копії. Вони працюють, але бувають повільні й нестабільні. Якщо зв'язок рветься — краще адаптер з позначкою v1.5 або OBDLink / Vgate."
+        } else if v.contains("ELM327") {
+            info.adapterKind = v.contains("V1.5") ? "ELM327 v1.5" : "ELM327 (\(info.adapterVersion))"
+        } else if v.contains("OBD") {
+            info.adapterKind = info.adapterVersion
+        } else {
+            info.adapterKind = info.adapterVersion.isEmpty ? "Невідомий сканер (сумісний з ELM327)" : info.adapterVersion
+        }
     }
 
     static func decodeSupported(_ bytes: [UInt8], offset: UInt8) -> Set<UInt8> {

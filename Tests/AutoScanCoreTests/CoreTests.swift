@@ -260,3 +260,30 @@ final class PackCatalogTests: XCTestCase {
         XCTAssertFalse(PackCatalog.isNewer("1.0", than: "1.0"))
     }
 }
+
+final class AdapterCompatibilityTests: XCTestCase {
+    /// Клон, що не знаходить протокол сам, має підключитися через ручний перебір.
+    func testManualProtocolFallback() async throws {
+        let sc = DemoScenario.with(id: "astra")
+        XCTAssertTrue(sc.failsAutoSearch)
+        let session = ELM327Session(transport: DemoTransport(scenario: sc))
+        try await session.transport.open()
+        let obd = OBDService(session: session)
+        try await obd.initialize()
+        XCTAssertEqual(obd.info.protocolNumber, "5")
+        XCTAssertFalse(obd.info.isCAN)
+        XCTAssertEqual(obd.info.adapterKind, "Клон ELM327 v2.1")
+        XCTAssertNotNil(obd.info.adapterNote)
+        let dtcs = try await obd.readDTCs(kind: .stored)
+        XCTAssertEqual(dtcs.map(\.code), sc.stored)
+    }
+
+    func testAdapterKindNormal() async throws {
+        let session = ELM327Session(transport: DemoTransport())
+        try await session.transport.open()
+        let obd = OBDService(session: session)
+        try await obd.initialize()
+        XCTAssertEqual(obd.info.adapterKind, "ELM327 v1.5")
+        XCTAssertNil(obd.info.adapterNote)
+    }
+}

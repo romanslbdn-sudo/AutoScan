@@ -178,27 +178,39 @@ final class AppModel: ObservableObject {
         logStore.clear()
         vin = nil; monitor = nil; dtcs = []
 
-        // Для USB без вибраної швидкості — пробуємо найпоширеніші по черзі
-        let bauds = baud > 0 ? [baud] : [38400, 115200, 9600, 230400, 500000]
-        let makeTransport: (Int) -> OBDTransport? = { b in
-            switch kind {
-            case .demo: return DemoTransport(scenario: demo)
-            case .usb: return SerialTransport(path: serialPath, baudRate: b)
-            case .wifi: return TCPTransport(host: host, port: port)
-            case .bluetooth:
+        // Різні сканери налаштовані по-різному, тому пробуємо кілька варіантів по черзі:
+        // для USB — різні швидкості порту, для Wi‑Fi — найпоширеніші адреси.
+        typealias Attempt = (label: String, make: () -> OBDTransport?)
+        var attempts: [Attempt] = []
+        switch kind {
+        case .demo:
+            attempts = [("", { () -> OBDTransport? in DemoTransport(scenario: demo) })]
+        case .usb:
+            let bauds = baud > 0 ? [baud] : [38400, 115200, 9600, 230400, 500000]
+            attempts = bauds.map { b -> Attempt in ("швидкість \(b)", { () -> OBDTransport? in SerialTransport(path: serialPath, baudRate: b) }) }
+        case .wifi:
+            var endpoints: [(String, UInt16)] = [(host, port)]
+            for e in [("192.168.0.10", UInt16(35000)), ("192.168.1.10", 35000), ("192.168.0.10", 23),
+                      ("192.168.0.123", 35000), ("192.168.1.5", 35000)]
+            where !endpoints.contains(where: { $0.0 == e.0 && $0.1 == e.1 }) {
+                endpoints.append(e)
+            }
+            attempts = endpoints.map { e -> Attempt in ("адреса \(e.0):\(e.1)", { () -> OBDTransport? in TCPTransport(host: e.0, port: e.1) }) }
+        case .bluetooth:
+            attempts = [("", { () -> OBDTransport? in
                 guard let d = bleDevice else { return nil }
                 return BLETransport(deviceID: d.id, deviceName: d.name)
-            }
+            })]
         }
-        let attempts = kind == .usb ? bauds : [0]
+        let multi = attempts.count > 1
         let logStore = self.logStore
 
         Task {
             var lastError: Error = AdapterError.notConnected
-            for (i, b) in attempts.enumerated() {
-                guard let t = makeTransport(b) else { break }
-                if kind == .usb && attempts.count > 1 {
-                    self.connection = .connecting("Пробую швидкість \(b) (\(i + 1) з \(attempts.count))…")
+            for (i, attempt) in attempts.enumerated() {
+                guard let t = attempt.make() else { break }
+                if multi {
+                    self.connection = .connecting("Пробую \(attempt.label) (\(i + 1) з \(attempts.count))…")
                 }
                 let session = ELM327Session(transport: t)
                 session.onLog = { line in logStore.record(line) }
@@ -208,8 +220,8 @@ final class AppModel: ObservableObject {
                 let svc = OBDService(session: session)
                 do {
                     try await t.open()
-                    if kind == .usb && attempts.count > 1 {
-                        // Швидка перевірка: чи відповідає адаптер на цій швидкості
+                    if multi {
+                        // Швидка перевірка: чи відповідає сканер з цими налаштуваннями
                         let r = try await session.command("ATI", timeout: 1.5)
                         guard r.uppercased().contains("ELM") || r.uppercased().contains("OBD") || r.uppercased().contains("STN") else {
                             throw AdapterError.timeout
@@ -242,8 +254,11 @@ final class AppModel: ObservableObject {
             self.transport = nil
             self.service = nil
             var message = Self.describe(lastError)
-            if kind == .usb, attempts.count > 1, (lastError as? AdapterError) == .timeout {
-                message = "Адаптер не відповідає. Перевірте, що вибрано правильний пристрій і адаптер вставлений у машину (на ньому має світитися лампочка)."
+            if kind == .usb, multi, (lastError as? AdapterError) == .timeout {
+                message = "Сканер не відповідає. Перевірте, що вибрано правильний пристрій і сканер вставлений у машину (на ньому має світитися лампочка)."
+            }
+            if kind == .wifi, multi, !(lastError is AdapterError && (lastError as? AdapterError) == .unableToConnect) {
+                message = "Не вдалося знайти Wi‑Fi сканер. Перевірте, що Мак підключений до Wi‑Fi мережі сканера, а сканер вставлений у машину. Якщо в інструкції сканера вказана своя адреса — введіть її в «Додаткових налаштуваннях»."
             }
             self.connection = .failed(message)
         }

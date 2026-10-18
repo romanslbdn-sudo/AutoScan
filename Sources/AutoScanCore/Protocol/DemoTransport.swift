@@ -18,6 +18,8 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
     private var cleared = false
     private var distanceSinceClear = 1840
     private var searched = false
+    /// Протокол, вибраний командою ATSP («0» — автопошук).
+    private var selectedProtocol = "0"
 
     /// - Parameters:
     ///   - scenario: яке авто імітувати.
@@ -90,15 +92,22 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
     private func respond(to cmd: String) -> String {
         if cmd.hasPrefix("AT") {
             switch cmd {
-            case "ATZ", "ATWS": echo = true; spaces = true; return "\rELM327 v1.5 (демо)"
+            case "ATZ", "ATWS":
+                echo = true; spaces = true; selectedProtocol = "0"
+                return scenario.failsAutoSearch ? "\rELM327 v2.1" : "\rELM327 v1.5 (демо)"
             case "ATE0": echo = false; return "OK"
             case "ATE1": echo = true; return "OK"
             case "ATS0": spaces = false; return "OK"
             case "ATS1": spaces = true; return "OK"
-            case "ATDPN": return "A" + scenario.protocolNumber
+            case "ATDPN": return selectedProtocol == "0" ? "A" + scenario.protocolNumber : selectedProtocol
             case "ATRV": return String(format: "%.1fV", value(0x42) ?? 14.1)
-            case "ATI": return "ELM327 v1.5 (демо)"
-            default: return "OK"
+            case "ATI": return scenario.failsAutoSearch ? "ELM327 v2.1" : "ELM327 v1.5 (демо)"
+            default:
+                if cmd.hasPrefix("ATSP") || cmd.hasPrefix("ATTP") {
+                    selectedProtocol = String(cmd.dropFirst(4).prefix(1))
+                    if selectedProtocol.isEmpty { selectedProtocol = "0" }
+                }
+                return "OK"
             }
         }
         switch cmd {
@@ -122,6 +131,11 @@ public final class DemoTransport: OBDTransport, @unchecked Sendable {
             break
         }
         if cmd.count == 4, cmd.hasPrefix("01"), let pid = UInt8(cmd.suffix(2), radix: 16) {
+            if pid == 0 {
+                // Імітація капризного клону: автопошук не працює, ручний вибір — так
+                if selectedProtocol == "0" && scenario.failsAutoSearch { return "SEARCHING...\rUNABLE TO CONNECT" }
+                if selectedProtocol != "0" && selectedProtocol != scenario.protocolNumber { return "UNABLE TO CONNECT" }
+            }
             if pid % 0x20 == 0 {
                 guard let mask = supportedMask(offset: pid) else { return "NO DATA" }
                 let line = hex([0x41, pid] + mask)

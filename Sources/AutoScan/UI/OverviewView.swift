@@ -145,7 +145,12 @@ private struct VehicleCard: View {
                 }
                 Divider().overlay(Theme.stroke)
                 VStack(spacing: 8) {
-                    InfoRow(label: "Адаптер", value: model.connInfo.adapterVersion.isEmpty ? model.adapterName : model.connInfo.adapterVersion)
+                    InfoRow(label: "Сканер", value: model.connInfo.adapterKind.isEmpty ? model.adapterName : model.connInfo.adapterKind)
+                    if let note = model.connInfo.adapterNote {
+                        Label(note, systemImage: "exclamationmark.triangle")
+                            .font(Theme.caption).foregroundStyle(Theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     InfoRow(label: "Протокол", value: model.connInfo.protocolName)
                     InfoRow(label: "Параметрів доступно", value: "\(model.supportedPIDs.count)")
                 }

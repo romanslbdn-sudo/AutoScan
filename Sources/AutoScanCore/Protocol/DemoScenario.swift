@@ -60,6 +60,8 @@ public struct DemoScenario: Identifiable, Sendable {
     let monitorsIncomplete: UInt8
     let pids: Set<UInt8>
     let model: DemoEngine
+    /// Імітує дешевий сканер, який не знаходить протокол автоматично.
+    var failsAutoSearch: Bool = false
 
     public var isCAN: Bool { ["6", "7", "8", "9"].contains(protocolNumber) }
     public var faultCount: Int { Set(stored + pending + permanent).count }
@@ -102,12 +104,13 @@ public struct DemoScenario: Identifiable, Sendable {
 
         DemoScenario(
             id: "astra", car: "Opel Astra G", engine: "1.6 · бензин", year: 2003,
-            summary: "Зношений каталізатор і термостат; старий протокол, без VIN",
+            summary: "Зношений каталізатор і термостат; старий протокол, без VIN, капризний клон-сканер",
             vin: nil, protocolNumber: "5", isDiesel: false,
             stored: ["P0420", "P0128"], pending: [], permanent: [], supportsPermanent: false,
             monitorsC: 0x25, monitorsIncomplete: 0x01, pids: oldPetrolPIDs,
             model: DemoEngine(idleRPM: 850, rpmJitter: 15, driveRPM: 3000, coolantStart: 67, coolantTarget: 71,
-                              stft: 1.5, ltft: 3.1, mapIdle: 36, o2Down: .mirror, voltage: 13.9)),
+                              stft: 1.5, ltft: 3.1, mapIdle: 36, o2Down: .mirror, voltage: 13.9),
+            failsAutoSearch: true),
 
         DemoScenario(
             id: "bmw", car: "BMW 3 E90 320i", engine: "2.0 · бензин", year: 2007,
