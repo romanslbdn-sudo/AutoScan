@@ -43,7 +43,8 @@ public struct BrandPack: Codable, Identifiable, Hashable, Sendable {
 
     public func applies(toBrand brand: String?) -> Bool {
         guard let brand = brand?.lowercased() else { return false }
-        return matches.contains { brand.hasPrefix($0.lowercased()) }
+        // Порожня назва підійшла б до будь-якої марки — і чужі заводські коди видавалися б за свої.
+        return matches.contains { !$0.isEmpty && brand.hasPrefix($0.lowercased()) }
     }
 
     /// Шаблон для створення власного пакета.

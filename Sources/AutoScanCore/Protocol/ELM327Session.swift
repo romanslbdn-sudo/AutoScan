@@ -85,7 +85,52 @@ public final class ELM327Session: @unchecked Sendable {
         defer { Task { await commandLock.unlock() } }
 
         log(.sent, cmd)
-        let response: String = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
+        let response: String
+        do {
+            response = try await exchange(cmd, timeout: timeout)
+        } catch AdapterError.timeout {
+            // Запізніла відповідь могла б дістатися наступній команді (напр. «помилок немає»
+            // замість справжніх кодів). Тому зупиняємо адаптер і викидаємо все, що він ще надішле.
+            await resync()
+            throw AdapterError.timeout
+        }
+        let cleaned = Self.stripEcho(response, command: cmd)
+        log(.received, cleaned.replacingOccurrences(of: "\r", with: " ⏎ ").trimmingCharacters(in: .whitespaces))
+        return cleaned
+    }
+
+    /// Час тиші, після якого вважаємо, що адаптер усе договорив.
+    static let resyncQuietTime: TimeInterval = 0.3
+    static let resyncMaxTime: TimeInterval = 2
+
+    /// Будь-який символ перериває запит, який адаптер ще виконує. «ATI» нешкідлива:
+    /// на відміну від порожнього рядка, вона не повторює попередню команду (напр. стирання помилок).
+    private func resync() async {
+        log(.info, "Адаптер не відповів вчасно — синхронізую зв'язок")
+        try? transport.send(Data("ATI\r".utf8))
+        let start = Date()
+        var lastSize = -1
+        var quietSince = Date()
+        while Date().timeIntervalSince(start) < Self.resyncMaxTime {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            let (size, hasPrompt) = bufferSnapshot()
+            if size != lastSize { lastSize = size; quietSince = Date(); continue }
+            if hasPrompt && Date().timeIntervalSince(quietSince) >= Self.resyncQuietTime { break }
+        }
+        clearBuffer()
+    }
+
+    private func bufferSnapshot() -> (size: Int, hasPrompt: Bool) {
+        state.lock(); defer { state.unlock() }
+        return (buffer.count, buffer.contains(">"))
+    }
+
+    private func clearBuffer() {
+        state.lock(); buffer = ""; state.unlock()
+    }
+
+    private func exchange(_ cmd: String, timeout: TimeInterval) async throws -> String {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
             state.lock()
             buffer = ""
             waiterToken += 1
@@ -102,9 +147,6 @@ public final class ELM327Session: @unchecked Sendable {
                 self?.failWaiter(token: token, error: AdapterError.timeout)
             }
         }
-        let cleaned = Self.stripEcho(response, command: cmd)
-        log(.received, cleaned.replacingOccurrences(of: "\r", with: " ⏎ ").trimmingCharacters(in: .whitespaces))
-        return cleaned
     }
 
     static func stripEcho(_ response: String, command: String) -> String {

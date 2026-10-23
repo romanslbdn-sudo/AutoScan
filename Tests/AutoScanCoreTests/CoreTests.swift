@@ -446,3 +446,47 @@ final class BrandVINTests: XCTestCase {
         XCTAssertEqual(VINInfo(vin: "JTNB11HK0G3123456").region, .asia)
     }
 }
+
+/// Адаптер, що відповідає із заданою затримкою (щоб відтворити запізнілу відповідь).
+final class SlowTransport: OBDTransport, @unchecked Sendable {
+    var onReceive: ((Data) -> Void)?
+    var onDisconnect: ((String) -> Void)?
+    var displayName: String { "slow" }
+    let replies: [String: (delay: TimeInterval, text: String)]
+    init(_ replies: [String: (delay: TimeInterval, text: String)]) { self.replies = replies }
+    func open() async throws {}
+    func close() {}
+    func send(_ data: Data) throws {
+        let cmd = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let r = replies[cmd] else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + r.delay) { [weak self] in
+            self?.onReceive?(Data((r.text + "\r\r>").utf8))
+        }
+    }
+}
+
+final class SessionResyncTests: XCTestCase {
+    /// Запізніла відповідь на «03» не має дістатися наступній команді.
+    func testLateReplyDoesNotLeakIntoNextCommand() async throws {
+        let t = SlowTransport([
+            "03": (0.4, "43 01 71 00 00 00 00"),
+            "ATI": (0.05, "ELM327 v1.5"),
+            "0100": (0.3, "41 00 BE 3E B8 11"),
+        ])
+        let s = ELM327Session(transport: t)
+        do {
+            _ = try await s.command("03", timeout: 0.3)
+            XCTFail("мав бути тайм-аут")
+        } catch {
+            XCTAssertEqual(error as? AdapterError, .timeout)
+        }
+        // Справжня відповідь на 0100 приходить пізніше за запізнілу відповідь на 03.
+        let next = try await s.command("0100")
+        XCTAssertTrue(next.contains("41 00"), "отримано чужу відповідь: \(next)")
+    }
+
+    func testEmptyBrandMatchDoesNotApplyToEveryCar() {
+        let pack = BrandPack(id: "x", brand: "X", title: "X", version: "1", matches: [""], notes: nil, codes: [])
+        XCTAssertFalse(pack.applies(toBrand: "BMW"))
+    }
+}

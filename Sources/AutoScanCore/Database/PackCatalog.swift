@@ -13,7 +13,7 @@ public struct PackCatalog: Codable, Sendable {
 
         public func applies(toBrand brand: String?) -> Bool {
             guard let b = brand?.lowercased() else { return false }
-            return matches.contains { b.hasPrefix($0.lowercased()) }
+            return matches.contains { !$0.isEmpty && b.hasPrefix($0.lowercased()) }
         }
     }
 
